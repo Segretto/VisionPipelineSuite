@@ -10,18 +10,43 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def copy_images(images, src_dir, dest_dir):
+def copy_images(images, src_dir, dest_dir, rename_images=False):
     """
-    Copy selected images to a specified directory.
+    Copy selected images to a specified directory, and optionally rename them with new numerical IDs.
+    Update the images' filenames in the dataset metadata if renamed.
     """
-    for image in images:
+    total_images = len(images)
+    id_format = f"{{:0{len(str(total_images + 2))}d}}"  # Adds two orders of magnitude to total_images for new IDs
+
+    updated_images = []  # To keep track of updated image information
+
+    for idx, image in enumerate(images, start=1):
         try:
+            # Ensure image file extension is '.jpeg'
+            image_name = Path(image['file_name'])
+            if image_name.suffix in ['.jpg', '.jpeg']:
+                new_file_name = image_name.stem + '.jpeg'
+            else:
+                new_file_name = image_name.name
+
+            # If rename_images is True, rename files using numerical IDs
+            if rename_images:
+                new_file_name = id_format.format(idx) + '.jpeg'
+
+            # Update the image metadata to reflect the new filename
+            updated_image = image.copy()
+            updated_image['file_name'] = new_file_name
+            updated_images.append(updated_image)
+
             src_path = Path(src_dir) / image['file_name']
-            dest_path = Path(dest_dir) / src_path.name
+            dest_path = Path(dest_dir) / new_file_name
             shutil.copy(src_path, dest_path)
-            logger.debug(f"Successfully copied {src_path} to {dest_path}")
+            logger.info(f"Successfully copied {src_path} to {dest_path}")
+        
         except Exception as e:
             logger.error(f"Failed to copy {src_path} to {dest_path}: {e}")
+
+    return updated_images
 
 def filter_annotations(images_set, annotations, is_pose_estimation):
     image_ids = {image['id'] for image in images_set}
@@ -76,7 +101,7 @@ def create_coco_subset(images, annotations, categories):
 
 def split_dataset(images_dir, labels_json_path, output_dir, 
                   train_ratio=0.75, val_ratio=0.1, is_pose_estimation=False, 
-                  classes="all"):
+                  rename_images=False, classes="all"):
     """
     Splits a COCO dataset into training, validation, and testing sets based on given ratios.
     """
@@ -129,9 +154,9 @@ def split_dataset(images_dir, labels_json_path, output_dir,
             labels_output_path = output_dir / "labels" / type
             labels_output_path.mkdir(parents=True, exist_ok=True)
 
-            copy_images(images_set, images_dir, images_output_path)
+            updated_images_set = copy_images(images_set, images_dir, images_output_path, rename_images=rename_images)
 
-            filtered_annotations = filter_annotations(images_set, annotations, is_pose_estimation)
+            filtered_annotations = filter_annotations(updated_images_set, annotations, is_pose_estimation)
             coco_file = create_coco_subset(images_set, filtered_annotations, categories)
             with open(labels_output_path / "coco.json", 'w') as file:
                 json.dump(coco_file, file, indent=4)
@@ -147,7 +172,8 @@ if __name__ == "__main__":
     parser.add_argument("--train_ratio", type=float, default=0.75, help="Proportion of images for training (default: 0.75)")
     parser.add_argument("--val_ratio", type=float, default=0.1, help="Proportion of images for validation (default: 0.1)")
     parser.add_argument("--pose_estimation", action='store_true', help="Flag to indicate if the dataset is for pose estimation")
+    parser.add_argument("--rename_images", action="store_true", help="Assign new numerical IDs to image file names")
     parser.add_argument("--classes", nargs='+', help="List of class names to process (default: all classes)")
-    
+
     args = parser.parse_args()
     split_dataset(args.images_dir, args.coco_json_path, args.output_dir, args.train_ratio, args.val_ratio, args.pose_estimation)
