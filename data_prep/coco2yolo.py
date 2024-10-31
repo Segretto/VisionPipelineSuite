@@ -1,12 +1,16 @@
 import json
 import argparse
 import logging
+import cv2
+import numpy as np
+
 from pathlib import Path
+from pycocotools import mask as maskUtils
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def convert_coco_to_yolo(size, box, category_id):
+def convert_bounding_boxes(size, box, category_id):
     dw = 1. / size[0]
     dh = 1. / size[1]
     x = (box[0] + box[2] / 2.0) * dw
@@ -15,20 +19,73 @@ def convert_coco_to_yolo(size, box, category_id):
     h = box[3] * dh
     return f"{category_id} {x} {y} {w} {h}"
 
-def convert_keypoints_to_yolo(size, box, keypoints, category_id):
-    yolo_bbox = convert_coco_to_yolo(size, box, category_id)
+def convert_pose_keypoints(size, box, keypoints, category_id):
+    yolo_bbox = convert_bounding_boxes(size, box, category_id)
     dw = 1. / size[0]
     dh = 1. / size[1]
     yolo_keypoints = [(keypoints[i] * dw, keypoints[i + 1] * dh, keypoints[i + 2]) for i in range(0, len(keypoints), 3)]
     keypoints_str = ' '.join([f"{kp[0]} {kp[1]} {kp[2]}" for kp in yolo_keypoints])
     return f"{yolo_bbox} {keypoints_str}"
 
+
+def convert_segmentation_masks(size, segmentation_mask, category_id):
+
+    # Checks if mask is in RLE format
+    if isinstance(segmentation_mask, dict) and 'counts' in segmentation_mask:
+       
+        # Decode RLE to a binary mask, then convert to polygons
+        rle = maskUtils.frPyObjects(segmentation_mask,
+                segmentation_mask['size'][0],
+                segmentation_mask['size'][1])
+        
+        binary_mask = maskUtils.decode(rle)
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        
+        norm_coords = contours[0].flatten()
+
+        # norm_x_coords = np.round(coords[0::2]/size[0], 3)
+        # norm_y_coords = np.round(coords[1::2]/size[1], 3)
+
+        # norm_coords = np.empty(coords.shape, dtype=np.float32)
+        # norm_coords[0::2] = norm_x_coords
+        # norm_coords[1::2] = norm_y_coords
+
+        norm_coords[0::2] = norm_coords[0::2] / size[0]
+        norm_coords[1::2] = norm_coords[1::2] / size[1]
+
+    # Otherwise, assume polygon format (alternative cases)
+    else:
+        norm_coords = np.array(segmentation_mask)
+        norm_coords[0::2] = norm_coords[0::2] / size[0]
+        norm_coords[1::2] = norm_coords[1::2] / size[1]
+
+    f"{category_id} {' '.join(map(str, norm_coords))}"
+
 def convert_coco_to_kitti(size, box, category_name):
     x1, y1 = box[0], box[1]
     x2, y2 = box[0] + box[2], box[1] + box[3]
     return f"{category_name} 0 0 0 {x1} {y1} {x2} {y2} 0 0 0 0 0 0 0"
 
-def process_annotations(image_info, data, is_pose_estimation=False, output_format="yolo"):
+def decode_rle(rle, height, width):
+    """
+    Decode RLE format to a binary mask.
+    """
+    # Initialize an empty binary mask
+    mask = np.zeros(height * width, dtype=np.uint8)
+
+    # Decode the RLE to create the mask
+    idx = 0
+    for i, length in enumerate(rle):
+        if i % 2 == 0:
+            idx += length
+        else:
+            mask[idx:idx + length] = 1
+            idx += length
+
+    # Reshape the flat mask array into the original image shape
+    return mask.reshape((height, width))
+
+def process_annotations(image_info, data, is_pose_estimation=False, mode="detection"):
     annotations_by_image = {}
     
     for ann in data['annotations']:
@@ -42,13 +99,18 @@ def process_annotations(image_info, data, is_pose_estimation=False, output_forma
         if img_filename not in annotations_by_image:
             annotations_by_image[img_filename] = []
 
-        if output_format == "yolo":
-            if is_pose_estimation and 'keypoints' in ann:
-                annotation_line = convert_keypoints_to_yolo(img_size, coco_bbox, ann['keypoints'], category_id)
-            else:
-                annotation_line = convert_coco_to_yolo(img_size, coco_bbox, category_id)
-        elif output_format == "kitti":
-            annotation_line = convert_coco_to_kitti(img_size, coco_bbox, category_name)
+        match mode:
+            case "detection":
+                if is_pose_estimation and 'keypoints' in ann:
+                    annotation_line = convert_pose_keypoints(img_size, coco_bbox, ann['keypoints'], category_id)
+                else:
+                    annotation_line = convert_bounding_boxes(img_size, coco_bbox, category_id)        
+
+            case "segmentation":
+                annotation_line = convert_segmentation_masks(img_size, ann["segmentation"], category_id)
+
+            case "od_kitti":
+                annotation_line = convert_coco_to_kitti(img_size, coco_bbox, category_name)
         
         annotations_by_image[img_filename].append(annotation_line)
     
@@ -105,13 +167,16 @@ def main():
     parser = argparse.ArgumentParser(description="Process COCO annotations and create YOLO or KITTI dataset.")
     parser.add_argument("dataset_path", help="Path to the root directory of the dataset.")
     parser.add_argument("--pose_estimation", action='store_true', help="Flag to indicate if the dataset is for pose estimation")
-    parser.add_argument("--output_format", choices=['yolo', 'kitti'], default='yolo', help="Output format for annotations")
-    parser.add_argument("--custom_dataset_split", nargs='+', default=['train', 'val', 'test'], help="Custom dataset split for ablation studies")
-    
+    # parser.add_argument("--output_format", choices=['yolo', 'kitti'], default='yolo', help="Output format for annotations")
+    parser.add_argument("--dataset_splits", nargs='+', default=['train', 'val', 'test'], help="Custom dataset split for ablation studies")
+    parser.add_argument("--mode", choices=["detection", "segmentation", "od_kitti"], default="detection",
+                        help="Choose processing mode: 'detection' for bounding boxes, 'segmentation' for segmentation masks.")
+   
+
     args = parser.parse_args()
     dataset_root = Path(args.dataset_path)
     
-    for split in args.custom_dataset_split:
+    for split in args.dataset_splits:
         label_path = dataset_root / "labels" / split / 'coco.json'
         if not label_path.exists():
             logger.warning(f"File not found: {label_path}")
@@ -122,12 +187,14 @@ def main():
         
         image_info = {img['id']: img for img in data['images']}
         
-        annotations = process_annotations(image_info, data, args.pose_estimation, args.output_format)
+        # annotations = process_annotations(image_info, data, args.pose_estimation, args.output_format)
+        annotations = process_annotations(image_info, data, args.pose_estimation, args.mode)
+
         create_annotation_files(annotations, label_path.parent)
 
     
-    if args.output_format == "yolo":
-        create_yaml_file(dataset_root, args.pose_estimation)
+    # if args.output_format == "yolo":
+    create_yaml_file(dataset_root, args.pose_estimation)
 
 if __name__ == "__main__":
     main()
