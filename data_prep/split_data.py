@@ -29,6 +29,43 @@ def filter_annotations(images_set, annotations, is_pose_estimation):
         return [annotation for annotation in annotations if annotation['image_id'] in image_ids and 'keypoints' in annotation]
     else:
         return [annotation for annotation in annotations if annotation['image_id'] in image_ids]
+    
+def filter_coco_by_classes(coco_data, classes):
+    """
+    Filters the COCO data to only include specified classes.
+    """
+    if classes == "all":
+        return coco_data  # No filtering needed
+
+    # Build mapping from category names to IDs
+    category_name_to_id = {category['name']: category['id'] for category in coco_data['categories']}
+    # Get category IDs for specified class names
+    selected_category_ids = [category_name_to_id[name] for name in classes if name in category_name_to_id]
+
+    if not selected_category_ids:
+        logger.error(f"No matching categories found for classes: {classes}")
+        raise ValueError(f"No matching categories found for classes: {classes}")
+
+    # Filter annotations
+    filtered_annotations = [annotation for annotation in coco_data['annotations'] if annotation['category_id'] in selected_category_ids]
+
+    # Get image IDs corresponding to filtered annotations
+    image_ids = {annotation['image_id'] for annotation in filtered_annotations}
+
+    # Filter images
+    filtered_images = [image for image in coco_data['images'] if image['id'] in image_ids]
+
+    # Filter categories
+    filtered_categories = [category for category in coco_data['categories'] if category['id'] in selected_category_ids]
+
+    # Build the new coco_data
+    filtered_coco_data = {
+        'images': filtered_images,
+        'annotations': filtered_annotations,
+        'categories': filtered_categories
+    }
+
+    return filtered_coco_data
 
 def create_coco_subset(images, annotations, categories):
     return {
@@ -37,7 +74,9 @@ def create_coco_subset(images, annotations, categories):
         'categories': categories
     }
 
-def split_dataset(images_dir, labels_json_path, output_dir, train_ratio=0.75, val_ratio=0.1, is_pose_estimation=False):
+def split_dataset(images_dir, labels_json_path, output_dir, 
+                  train_ratio=0.75, val_ratio=0.1, is_pose_estimation=False, 
+                  classes="all"):
     """
     Splits a COCO dataset into training, validation, and testing sets based on given ratios.
     """
@@ -52,6 +91,8 @@ def split_dataset(images_dir, labels_json_path, output_dir, train_ratio=0.75, va
     if not images_dir.exists():
         logger.error(f"Images directory does not exist: {images_dir}")
         return
+
+    coco_data = filter_coco_by_classes(coco_data, classes)
 
     # Extract image and annotation details
     images = coco_data.get('images', [])
@@ -106,6 +147,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_ratio", type=float, default=0.75, help="Proportion of images for training (default: 0.75)")
     parser.add_argument("--val_ratio", type=float, default=0.1, help="Proportion of images for validation (default: 0.1)")
     parser.add_argument("--pose_estimation", action='store_true', help="Flag to indicate if the dataset is for pose estimation")
-
+    parser.add_argument("--classes", nargs='+', help="List of class names to process (default: all classes)")
+    
     args = parser.parse_args()
     split_dataset(args.images_dir, args.coco_json_path, args.output_dir, args.train_ratio, args.val_ratio, args.pose_estimation)
