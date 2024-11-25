@@ -43,6 +43,36 @@ WIDTH = os.environ.get('WIDTH', 1920)
 HEIGHT = os.environ.get('HEIGHT', 1080)
 FPS = os.environ.get('FPS', 30)
 
+def main(args):
+    """
+    Main function to parse arguments, set up the pipeline, and start the event loop.
+    """
+
+    Gst.init(None)
+    loop = GLib.MainLoop()
+    
+    device_path = "/dev/video0" if len(args) < 2 else args[1]
+    elements = create_pipeline()
+    link_elements(elements)
+    set_element_properties(elements, device_path)
+    
+    bus = elements["pipeline"].get_bus()
+    bus.add_signal_watch()
+    bus.connect("message", bus_call, loop)
+    
+    osdsinkpad = elements["nvosd"].get_static_pad("sink")
+    osdsinkpad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, 0)
+    
+    logger.info("Starting pipeline")
+    elements["pipeline"].set_state(Gst.State.PLAYING)
+    
+    try:
+        loop.run()
+    except:
+        pass
+    finally:
+        elements["pipeline"].set_state(Gst.State.NULL)
+
 def load_config_file(config_file_path):
     """
     Load the PGIE configuration file and extract the label file path.
@@ -268,41 +298,7 @@ def osd_sink_pad_buffer_probe(pad, info, u_data):
     
     return Gst.PadProbeReturn.OK
 
-def main(args):
-    """
-    Main function to parse arguments, set up the pipeline, and start the event loop.
 
-    Args:
-        args (list): Command-line arguments.
-
-    Returns:
-        int: Exit status.
-    """
-
-    Gst.init(None)
-    loop = GLib.MainLoop()
-    
-    device_path = "/dev/video0" if len(args) < 2 else args[1]
-    elements = create_pipeline()
-    link_elements(elements)
-    set_element_properties(elements, device_path)
-    
-    bus = elements["pipeline"].get_bus()
-    bus.add_signal_watch()
-    bus.connect("message", bus_call, loop)
-    
-    osdsinkpad = elements["nvosd"].get_static_pad("sink")
-    osdsinkpad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, 0)
-    
-    logger.info("Starting pipeline")
-    elements["pipeline"].set_state(Gst.State.PLAYING)
-    
-    try:
-        loop.run()
-    except:
-        pass
-    finally:
-        elements["pipeline"].set_state(Gst.State.NULL)
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))

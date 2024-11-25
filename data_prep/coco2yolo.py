@@ -10,6 +10,26 @@ from pycocotools import mask as maskUtils
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def main(dataset_path, dataset_splits, pose_estimation, mode):
+    dataset_root = Path(dataset_path)
+    
+    for split in dataset_splits:
+        label_path = dataset_root / "labels" / split / 'coco.json'
+        if not label_path.exists():
+            logger.warning(f"File not found: {label_path}")
+            continue
+
+        with open(label_path) as f:
+            data = json.load(f)
+        
+        image_info = {img['id']: img for img in data['images']}
+        
+        annotations = process_annotations(image_info, data, pose_estimation, mode)
+
+        create_annotation_files(annotations, label_path.parent)
+
+    create_yaml_file(dataset_root, args.pose_estimation)
+
 def convert_bounding_boxes(size, box, category_id):
     dw = 1. / size[0]
     dh = 1. / size[1]
@@ -43,13 +63,6 @@ def convert_segmentation_masks(size, segmentation_mask, category_id):
         
         norm_coords = contours[0].flatten()
 
-        # norm_x_coords = np.round(coords[0::2]/size[0], 3)
-        # norm_y_coords = np.round(coords[1::2]/size[1], 3)
-
-        # norm_coords = np.empty(coords.shape, dtype=np.float32)
-        # norm_coords[0::2] = norm_x_coords
-        # norm_coords[1::2] = norm_y_coords
-
         norm_coords[0::2] = norm_coords[0::2] / size[0]
         norm_coords[1::2] = norm_coords[1::2] / size[1]
 
@@ -82,7 +95,6 @@ def decode_rle(rle, height, width):
             mask[idx:idx + length] = 1
             idx += length
 
-    # Reshape the flat mask array into the original image shape
     return mask.reshape((height, width))
 
 def process_annotations(image_info, data, is_pose_estimation=False, mode="detection"):
@@ -163,7 +175,7 @@ names:
     except IOError as e:
         logger.error(f"Error writing to file {yaml_path}: {e}")
 
-def main():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process COCO annotations and create YOLO or KITTI dataset.")
     parser.add_argument("dataset_path", help="Path to the root directory of the dataset.")
     parser.add_argument("--pose_estimation", action='store_true', help="Flag to indicate if the dataset is for pose estimation")
@@ -172,29 +184,6 @@ def main():
     parser.add_argument("--mode", choices=["detection", "segmentation", "od_kitti"], default="detection",
                         help="Choose processing mode: 'detection' for bounding boxes, 'segmentation' for segmentation masks.")
    
-
     args = parser.parse_args()
-    dataset_root = Path(args.dataset_path)
-    
-    for split in args.dataset_splits:
-        label_path = dataset_root / "labels" / split / 'coco.json'
-        if not label_path.exists():
-            logger.warning(f"File not found: {label_path}")
-            continue
-
-        with open(label_path) as f:
-            data = json.load(f)
-        
-        image_info = {img['id']: img for img in data['images']}
-        
-        # annotations = process_annotations(image_info, data, args.pose_estimation, args.output_format)
-        annotations = process_annotations(image_info, data, args.pose_estimation, args.mode)
-
-        create_annotation_files(annotations, label_path.parent)
-
-    
-    # if args.output_format == "yolo":
-    create_yaml_file(dataset_root, args.pose_estimation)
-
-if __name__ == "__main__":
-    main()
+   
+    main(**vars(args))

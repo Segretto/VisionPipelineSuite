@@ -11,6 +11,33 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def main(labels, images):
+
+    labels_path = labels
+    images_path = images
+
+    output_dir = os.path.join(labels_path, 'yolo_annotations')
+    os.makedirs(output_dir, exist_ok=True)
+
+    class_mapping = {}
+
+    label_files = [f for f in os.listdir(labels_path) if f.endswith('.json')]
+
+    if not label_files:
+        logger.error("No JSON label files found in the labels directory.")
+        return
+
+    for label_file in label_files:
+        label_path = os.path.join(labels_path, label_file)
+        process_annotation_file(label_path, output_dir, class_mapping)
+
+    if class_mapping:
+        save_class_mapping(class_mapping, output_dir)
+        create_yaml_file(os.path.dirname(labels_path), class_mapping)
+
+    else:
+        logger.warning("No classes found in annotations.")
+
 def decode_bitmap(data):
     """
     Decodes the bitmap data from the JSON annotation.
@@ -22,16 +49,12 @@ def decode_bitmap(data):
         np.ndarray: The decoded binary mask as a NumPy array.
     """
     try:
-        # Base64 decode
         compressed_data = base64.b64decode(data)
 
-        # Zlib decompress
         decompressed_data = zlib.decompress(compressed_data)
 
-        # Convert decompressed data to a NumPy array
         image_array = np.frombuffer(decompressed_data, dtype=np.uint8)
 
-        # Decode image with unchanged color depth to preserve alpha channel
         mask = cv2.imdecode(image_array, cv2.IMREAD_UNCHANGED)
 
         if mask is None:
@@ -223,39 +246,11 @@ names:
     except Exception as e:
         logger.error(f"Error creating YAML file: {e}")
 
-def main():
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert instance segmentation annotations to YOLO segmentation format.")
     parser.add_argument('--labels', type=str, required=True, help='Path to the labels folder.')
     parser.add_argument('--images', type=str, required=True, help='Path to the images folder.')
     args = parser.parse_args()
-
-    labels_path = args.labels
-    images_path = args.images
-
-    # Create output directory for annotations if it doesn't exist
-    output_dir = os.path.join(labels_path, 'yolo_annotations')
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Initialize class mapping dictionary
-    class_mapping = {}
-
-    # Get list of JSON label files
-    label_files = [f for f in os.listdir(labels_path) if f.endswith('.json')]
-
-    if not label_files:
-        logger.error("No JSON label files found in the labels directory.")
-        return
-
-    for label_file in label_files:
-        label_path = os.path.join(labels_path, label_file)
-        process_annotation_file(label_path, output_dir, class_mapping)
-
-    if class_mapping:
-        save_class_mapping(class_mapping, output_dir)
-        # Create data.yaml file
-        create_yaml_file(os.path.dirname(labels_path), class_mapping)
-    else:
-        logger.warning("No classes found in annotations.")
-
-if __name__ == "__main__":
-    main()
+    
+    main(*vars(args))

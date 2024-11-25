@@ -7,6 +7,9 @@ from PIL import Image
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def main(image_folder, annotation_path):
+    process_images_and_annotations(image_folder, annotation_path)
+
 def find_min_resolution(image_folder):
     min_width = float('inf')
     min_height = float('inf')
@@ -66,13 +69,11 @@ def process_images_and_annotations(image_folder, annotation_path):
 
     update_annotations(annotation_path, target_size, (min_width, min_height))
 
-def main():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Resize images to the smallest resolution and update COCO annotations.")
     parser.add_argument("image_folder", help="Path to the folder containing images.")
     parser.add_argument("annotation_path", help="Path to the COCO annotation file.")
 
     args = parser.parse_args()
-    process_images_and_annotations(args.image_folder, args.annotation_path)
 
-if __name__ == "__main__":
-    main()
+    main(**vars(args))

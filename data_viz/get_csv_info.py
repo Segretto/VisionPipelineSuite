@@ -8,6 +8,16 @@ import argparse
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def main(folder_path, ouput_folder, gamma, generate_latex):
+
+    data = read_csv_files(folder_path)
+    if data:
+        plot_mAP_vs_epochs(data, output_folder, gamma)
+        plot_mAP_per_detector(data, output_folder, gamma)
+
+        if generate_latex:
+            generate_latex_table(data)
+
 def parse_file_name(file_name):
     parts = file_name.stem.split('_')
     if len(parts) >= 4:
@@ -62,9 +72,8 @@ def rank_detectors_by_mAP(data):
 def plot_mAP_vs_epochs(data, output_folder, gamma):
     plt.figure(figsize=(12, 8))
 
-    forest_green = [0.13, 0.55, 0.13]  # Forest green color
+    forest_green = [0.13, 0.55, 0.13]
 
-    # Calculate max mAP for each model type
     sorted_detectors = rank_detectors_by_mAP(data)
     max_mAPs = [data[detector].dropna(subset=['mAP'])['mAP'].max() for detector in sorted_detectors]
 
@@ -97,24 +106,20 @@ def plot_mAP_vs_epochs(data, output_folder, gamma):
     
     output_path = Path(output_folder) / 'mAP_vs_epochs.png'
     plt.savefig(output_path, bbox_inches='tight')
-    # plt.show()
 
 def plot_mAP_per_detector(data, output_folder, gamma):
     detector_types = list(set(detector.split(' + ')[0] for detector in data.keys()))
     colors = plt.cm.viridis(np.linspace(0, 1, len(detector_types)))
 
-    # Create a 2x2 grid plot
     fig, axes = plt.subplots(2, 2, figsize=(15, 15))
     axes = axes.flatten()
 
     for ax, (detector_type, color) in zip(axes, zip(detector_types, colors)):
         detector_data = {k: v for k, v in data.items() if k.startswith(detector_type)}
 
-        # Calculate max mAP for each model of the current detector type
         sorted_detectors = rank_detectors_by_mAP(detector_data)
         max_mAPs = [detector_data[detector].dropna(subset=['mAP'])['mAP'].max() for detector in sorted_detectors]
 
-        # Normalize and map colors
         max_mAPs = np.array(max_mAPs)
         norm_max_mAPs = (max_mAPs - max_mAPs.min()) / (max_mAPs.max() - max_mAPs.min())
         individual_colors = [exponential_color_mapping(value, color[:3], gamma) for value in norm_max_mAPs]
@@ -165,14 +170,10 @@ def plot_mAP_per_detector(data, output_folder, gamma):
 
         output_path = Path(output_folder) / f'mAP_vs_epochs_{detector_type}.png'
         plt.savefig(output_path, bbox_inches='tight')
-        # plt.show()
 
     plt.tight_layout()
     output_path = Path(output_folder) / 'mAP_2x2_grid.png'
     fig.savefig(output_path, bbox_inches='tight')
-    # plt.show()
-
-
 
 def generate_latex_table(data):
     models = ['Faster-RCNN', 'SSD', 'DSSD', 'YOLOv4', 'RetinaNet']
@@ -194,12 +195,14 @@ def generate_latex_table(data):
         for backbone in backbones:
             key = f"{model.lower()} + {backbone.lower()}"
             if key in data:
-                # Get the FPS value (assuming we have a 'fps' column in the DataFrame)
+
                 df = data[key]
                 fps_value = df['mAP'].max()  # Replace with appropriate logic to get the FPS value
                 row += f"& {np.round(fps_value, 2)} "
+
             else:
                 row += "& * "  # Placeholder for missing values
+
         row += r"\\"
         latex_table += f"{row}\n"
     
@@ -214,16 +217,6 @@ def generate_latex_table(data):
     print(latex_table)
 
 
-def main(folder_path, output_folder, gamma, generate_latex):
-    data = read_csv_files(folder_path)
-    if data:
-        plot_mAP_vs_epochs(data, output_folder, gamma)
-        plot_mAP_per_detector(data, output_folder, gamma)
-
-        if generate_latex:
-            generate_latex_table(data)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Plot mAP vs Epochs for different object detectors.')
     parser.add_argument('folder_path', type=str, help='Path to the folder containing CSV files')
@@ -233,4 +226,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     
-    main(args.folder_path, args.output_folder, args.gamma, args.latex)
+    main(**vars(args))

@@ -8,6 +8,28 @@ import argparse
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def main(folder_100, folder_60, folder_30, output_folder):
+    data_100 = read_csv_files(folder_100)
+    data_60 = read_csv_files(folder_60)
+    data_30 = read_csv_files(folder_30)
+    
+    if data_100 and data_60 and data_30:
+        data_100_resnet18 = filter_resnet_18(data_100)
+        data_60_resnet18 = filter_resnet_18(data_60)
+        data_30_resnet18 = filter_resnet_18(data_30)
+        
+        max_mAP_100 = get_max_mAP(data_100_resnet18)
+        max_mAP_60 = get_max_mAP(data_60_resnet18)
+        max_mAP_30 = get_max_mAP(data_30_resnet18)
+        
+        plot_max_mAP_vs_dataset_size(max_mAP_100, max_mAP_60, max_mAP_30, output_folder)
+
+        max_mAP_100_all = get_max_mAP(data_100)
+        max_mAP_60_all = get_max_mAP(data_60)
+        max_mAP_30_all = get_max_mAP(data_30)
+
+        plot_yolov4_backbones(max_mAP_100_all, max_mAP_60_all, max_mAP_30_all, output_folder)    
+
 def read_csv_files(folder_path):
     folder = Path(folder_path)
     if not folder.exists() or not folder.is_dir():
@@ -102,27 +124,6 @@ def plot_yolov4_backbones(max_mAP_100, max_mAP_60, max_mAP_30, output_folder):
     plt.savefig(output_path, bbox_inches='tight')
     # plt.show()
 
-def main(folder_100, folder_60, folder_30, output_folder):
-    data_100 = read_csv_files(folder_100)
-    data_60 = read_csv_files(folder_60)
-    data_30 = read_csv_files(folder_30)
-    
-    if data_100 and data_60 and data_30:
-        data_100_resnet18 = filter_resnet_18(data_100)
-        data_60_resnet18 = filter_resnet_18(data_60)
-        data_30_resnet18 = filter_resnet_18(data_30)
-        
-        max_mAP_100 = get_max_mAP(data_100_resnet18)
-        max_mAP_60 = get_max_mAP(data_60_resnet18)
-        max_mAP_30 = get_max_mAP(data_30_resnet18)
-        
-        plot_max_mAP_vs_dataset_size(max_mAP_100, max_mAP_60, max_mAP_30, output_folder)
-
-        max_mAP_100_all = get_max_mAP(data_100)
-        max_mAP_60_all = get_max_mAP(data_60)
-        max_mAP_30_all = get_max_mAP(data_30)
-
-        plot_yolov4_backbones(max_mAP_100_all, max_mAP_60_all, max_mAP_30_all, output_folder)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Analyze and plot maximum mAP vs Dataset Size for ResNet-18 Backbone and YOLOv4 with different backbones.')

@@ -10,6 +10,9 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def main(images_dir, coco_json_path, output_dir, train_ratio, val_ratio, pose_estimation):
+    split_dataset(images_dir, coco_json_path, output_dir, train_ratio, val_ratio, pose_estimation)
+
 def copy_images(images, src_dir, dest_dir, rename_images=False):
     """
     Copy selected images to a specified directory, and optionally rename them with new numerical IDs.
@@ -163,7 +166,8 @@ def split_dataset(images_dir, labels_json_path, output_dir,
             logger.info(f"Dataset for {type} saved successfully.")
         except Exception as e:
             logger.error(f"Failed to process data for {type}: {e}")
-            
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Split COCO dataset into training, validation, and testing sets.")
     parser.add_argument("images_dir", help="Path to the input directory containing images.")
@@ -176,4 +180,5 @@ if __name__ == "__main__":
     parser.add_argument("--classes", nargs='+', help="List of class names to process (default: all classes)")
 
     args = parser.parse_args()
-    split_dataset(args.images_dir, args.coco_json_path, args.output_dir, args.train_ratio, args.val_ratio, args.pose_estimation)
+
+    main(**vars(args))
