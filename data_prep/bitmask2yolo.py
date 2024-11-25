@@ -31,16 +31,36 @@ def decode_bitmap(data):
         # Convert decompressed data to a NumPy array
         image_array = np.frombuffer(decompressed_data, dtype=np.uint8)
 
-        # Decode image
+        # Decode image with unchanged color depth to preserve alpha channel
         mask = cv2.imdecode(image_array, cv2.IMREAD_UNCHANGED)
 
         if mask is None:
             logger.error("Failed to decode bitmap to image.")
+            return None
+
+        # Ensure mask is single-channel
+        if len(mask.shape) == 3 and mask.shape[2] == 4:
+            # Extract the alpha channel
+            mask = mask[:, :, 3]
+        elif len(mask.shape) == 3:
+            # Convert RGB to grayscale
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        elif len(mask.shape) == 2:
+            # Mask is already single-channel
+            pass
+        else:
+            logger.error(f"Unexpected mask shape: {mask.shape}")
+            return None
+
+        # Threshold the mask to make sure it's binary
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+
         return mask
 
     except Exception as e:
         logger.error(f"Error decoding bitmap: {e}")
         return None
+
 
 def get_segmentation_points(mask):
     """
