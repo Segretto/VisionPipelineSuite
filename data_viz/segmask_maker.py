@@ -21,41 +21,26 @@ def main(images_folder, labels_folder, output_folder):
 
     process_images(images_folder, labels_folder, output_folder)
 
-def catmull_rom_chain(P, points_per_segment):
-    
-    # TODO: remove this and implement scipy CubicSpline
-    # Calculate Catmull-Rom spline for a chain of points and return the interpolated points
-    sz = len(P)
+def B_spline_smoothing(polygon):
+    from scipy import interpolate
 
-    C = []
-    for i in range(sz):
-        p0 = P[i - 1]
-        p1 = P[i]
-        p2 = P[(i + 1) % sz]
-        p3 = P[(i + 2) % sz]
+    x = [pt[0] for pt in polygon]
+    y = [pt[1] for pt in polygon]
 
-        # Compute the points between p1 and p2
-        for t in np.linspace(0, 1, points_per_segment):
-            t2 = t * t
-            t3 = t2 * t
+    # Compute the B-spline representation of the polygon
+    # s=0 for interpolation; adjust s for smoothing
+    tck, u = interpolate.splprep([x, y], s=27, per=False)
+    out = interpolate.splev(u, tck)
 
-            # Catmull-Rom spline formula
-            x = 0.5 * ((2 * p1[0]) +
-                       (-p0[0] + p2[0]) * t +
-                       (2*p0[0] - 5*p1[0] + 4*p2[0] - p3[0]) * t2 +
-                       (-p0[0] + 3*p1[0] - 3*p2[0] + p3[0]) * t3)
-            y = 0.5 * ((2 * p1[1]) +
-                       (-p0[1] + p2[1]) * t +
-                       (2*p0[1] - 5*p1[1] + 4*p2[1] - p3[1]) * t2 +
-                       (-p0[1] + 3*p1[1] - 3*p2[1] + p3[1]) * t3)
-            C.append((x, y))
-    return C
+    x_new, y_new = out[0], out[1]
+
+    return list(zip(x_new, y_new))
 
 def process_images(images_folder, labels_folder, output_folder):
 
     class_map = {
-        '0': {'name': 'soy', 'color': (252, 35, 97)},        # Bright red color for soy
-        '1': {'name': 'cotton', 'color': (7, 234, 250)}      # Bright cyan color for cotton
+        '0': {'name': 'soy', 'color': (252, 35, 97)},       
+        '1': {'name': 'cotton', 'color': (7, 234, 250)}   
     }
 
     image_extensions = ['.jpg', '.jpeg', '.png']
@@ -193,10 +178,9 @@ def draw_segmentation_masks(img, labels, class_map):
         polygon = label['polygon']
 
         normalized_coords = list(polygon.exterior.coords)
+        
         abs_polygon = [(x * img_width, y * img_height) for x, y in normalized_coords]
-
-        ## Smooth the polygon using Catmull-Rom spline if desired
-        # abs_polygon = catmull_rom_chain(abs_polygon, 100)
+        abs_polygon = B_spline_smoothing(abs_polygon)
 
         # Create a semi-transparent fill color
         fill_opacity = 0.2
@@ -206,34 +190,6 @@ def draw_segmentation_masks(img, labels, class_map):
 
         draw.polygon(abs_polygon, fill=fill_color, outline=outline_color, width=2)
 
-        # # Optionally, draw the class name at the centroid of the polygon
-        # centroid_x = sum(x for x, y in abs_polygon) / len(abs_polygon)
-        # centroid_y = sum(y for x, y in abs_polygon) / len(abs_polygon)
-
-        # text = class_name.capitalize()
-
-        # x_left, y_top, x_right, y_bottom = font.getbbox(text)
-        # text_width = abs(x_right - x_left)
-        # text_height = abs(y_bottom - y_top)
-
-        # text_position = (centroid_x - text_width // 2, centroid_y - text_height // 2)
-
-        # # Ensure text is within image bounds
-        # if text_position[0] < 0:
-        #     text_position = (0, text_position[1])
-        # if text_position[1] < 0:
-        #     text_position = (text_position[0], 0)
-        # if text_position[0] + text_width > img_width:
-        #     text_position = (img_width - text_width, text_position[1])
-        # if text_position[1] + text_height > img_height:
-        #     text_position = (text_position[0], img_height - text_height)
-
-        # draw.text(
-        #     text_position,
-        #     text,
-        #     fill=(255, 255, 255, 255),  # White color
-        #     font=font
-        # )
 
     draw_legend(draw, class_map, legend_font, img_width, img_height)
 
