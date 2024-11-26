@@ -152,7 +152,7 @@ def create_yaml_file(dataset_path, data_split, is_pose_estimation=False):
 
     # TODO: Make the contents of the data.yml file to be read from a template
     yaml_content = f"""path: {dataset_path.absolute()}  # dataset root dir
-train: images/train  # train images (relative to 'path')
+train: images/{data_split}  # train images (relative to 'path')
 val: images/val  # val images (relative to 'path')
 test:  # test images (optional)
 
