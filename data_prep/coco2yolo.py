@@ -28,7 +28,7 @@ def main(dataset_path, dataset_splits, pose_estimation, mode):
 
         create_annotation_files(annotations, label_path.parent)
 
-    create_yaml_file(dataset_root, args.pose_estimation)
+    create_yaml_file(dataset_root, dataset_splits[0], pose_estimation)
 
 def convert_bounding_boxes(size, box, category_id):
     dw = 1. / size[0]
@@ -138,8 +138,8 @@ def create_annotation_files(annotations_by_image, output_dir):
         except IOError as e:
             logger.error(f"Error writing to file {txt_path}: {e}")
 
-def create_yaml_file(dataset_path, is_pose_estimation=False):
-    label_path = dataset_path / "labels" / 'train' / 'coco.json'
+def create_yaml_file(dataset_path, data_split, is_pose_estimation=False):
+    label_path = dataset_path / "labels" / data_split / 'coco.json'
     if not label_path.exists():
         logger.error(f"File not found: {label_path}")
         return
@@ -150,6 +150,7 @@ def create_yaml_file(dataset_path, is_pose_estimation=False):
     sorted_class_names = sorted(class_names.items())
     class_entries = "\n".join([f"  {id}: {name}" for id, name in sorted_class_names])
 
+    # TODO: Make the contents of the data.yml file to be read from a template
     yaml_content = f"""path: {dataset_path.absolute()}  # dataset root dir
 train: images/train  # train images (relative to 'path')
 val: images/val  # val images (relative to 'path')
@@ -179,10 +180,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process COCO annotations and create YOLO or KITTI dataset.")
     parser.add_argument("dataset_path", help="Path to the root directory of the dataset.")
     parser.add_argument("--pose_estimation", action='store_true', help="Flag to indicate if the dataset is for pose estimation")
-    # parser.add_argument("--output_format", choices=['yolo', 'kitti'], default='yolo', help="Output format for annotations")
     parser.add_argument("--dataset_splits", nargs='+', default=['train', 'val', 'test'], help="Custom dataset split for ablation studies")
     parser.add_argument("--mode", choices=["detection", "segmentation", "od_kitti"], default="detection",
                         help="Choose processing mode: 'detection' for bounding boxes, 'segmentation' for segmentation masks.")
+    # parser.add_argument("--output_format", choices=['yolo', 'kitti'], default='yolo', help="Output format for annotations")
    
     args = parser.parse_args()
    
