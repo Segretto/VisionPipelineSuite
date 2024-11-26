@@ -10,8 +10,15 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def main(images_dir, coco_json_path, output_dir, train_ratio, val_ratio, pose_estimation):
-    split_dataset(images_dir, coco_json_path, output_dir, train_ratio, val_ratio, pose_estimation)
+def main(images_dir, coco_json_path, output_dir, train_ratio, val_ratio, ablation, pose_estimation):
+    if ablation < 0:
+        logger.error("Ablation must be a positive integer.")
+        return
+    
+    elif ablation > 0:
+        logger.info(f"Ablation mode enabled with {ablation} dataset chunks.")
+   
+    split_data(images_dir, coco_json_path, output_dir, train_ratio, val_ratio, ablation, pose_estimation, ablation)
 
 def copy_images(images, src_dir, dest_dir, rename_images=False):
     """
@@ -102,38 +109,69 @@ def create_coco_subset(images, annotations, categories):
         'categories': categories
     }
 
-def split_dataset(images_dir, labels_json_path, output_dir, 
-                  train_ratio=0.75, val_ratio=0.1, is_pose_estimation=False, 
-                  rename_images=False, classes="all"):
+def log_object_count_per_class(coco_data):
     """
-    Splits a COCO dataset into training, validation, and testing sets based on given ratios.
+    Logs the total number of objects for each class in the COCO dataset.
     """
+    category_counts = {category['name']: 0 for category in coco_data['categories']}
+    for annotation in coco_data['annotations']:
+        category_id = annotation['category_id']
+        category_name = next((cat['name'] for cat in coco_data['categories'] if cat['id'] == category_id), None)
+        if category_name:
+            category_counts[category_name] += 1
 
-    logger.info("Loading COCO annotations...")
-    with open(labels_json_path, 'r') as f:
-        coco_data = json.load(f)
+    logger.info("Object counts per class:")
+    for category, count in category_counts.items():
+        logger.info(f"  {category}: {count}")
+    return category_counts
 
-    images_dir = Path(images_dir)
-    output_dir = Path(output_dir)
+def split_for_ablation(images, annotations, categories, images_dir, 
+                       output_dir, ablation, is_pose_estimation, 
+                       rename_images):
+    
+    
+    ablation_chunks = [int(len(images) * (i + 1) / ablation) for i in range(ablation)]
+    logger.info(f"Ablation chunk sizes (number of images): {ablation_chunks}")
+    
+    for _, chunk_size in enumerate(ablation_chunks, start=1):
+        chunk_images = images[:chunk_size]
 
-    if not images_dir.exists():
-        logger.error(f"Images directory does not exist: {images_dir}")
-        return
+        # Create folder for this ablation chunk
+        ablation_output_path = output_dir / f"{int((chunk_size / len(images)) * 100)}_percent"
+        ablation_output_path.mkdir(parents=True, exist_ok=True)
 
-    coco_data = filter_coco_by_classes(coco_data, classes)
+        images_output_path = ablation_output_path / "images"
+        images_output_path.mkdir(parents=True, exist_ok=True)
 
-    # Extract image and annotation details
-    images = coco_data.get('images', [])
-    annotations = coco_data.get('annotations', [])
-    categories = coco_data.get('categories', [])
+        labels_output_path = ablation_output_path / "labels"
+        labels_output_path.mkdir(parents=True, exist_ok=True)
 
-    # Log the count of annotated images and objects
-    logger.info(f"Total annotated images: {len(images)}")
-    logger.info(f"Total annotated objects: {len(annotations)}")
+        # Copy images for this chunk
+        updated_chunk_images = copy_images(chunk_images, images_dir, images_output_path, rename_images=rename_images)
 
-    # Log the total amount of images in the images folder
-    total_images_in_folder = len(list(images_dir.glob('*')))
-    logger.info(f"Total images in the folder {images_dir}: {total_images_in_folder}")
+        # Filter annotations for this chunk
+        filtered_annotations = filter_annotations(updated_chunk_images, annotations, is_pose_estimation)
+        coco_chunk = create_coco_subset(chunk_images, filtered_annotations, categories)
+
+        # Save COCO JSON for this chunk
+        with open(labels_output_path / "coco.json", 'w') as file:
+            json.dump(coco_chunk, file, indent=4)
+        
+        # Log object counts for this chunk
+        chunk_category_counts = log_object_count_per_class(coco_chunk)
+
+        # Save metadata for this chunk
+        meta_file_path = ablation_output_path / "meta.txt"
+        with open(meta_file_path, 'w') as meta_file:
+            meta_file.write("Class-wise Object Counts:\n")
+            for category, count in chunk_category_counts.items():
+                meta_file.write(f"{category}: {count}\n")
+        
+        logger.info(f"Ablation dataset for {int((chunk_size / len(images)) * 100)}% created successfully.")
+
+def split_train_test_val(images, annotations, categories, images_dir, 
+                         output_dir, train_ratio, val_ratio, 
+                         is_pose_estimation, rename_images):
 
     # Validate ratios
     if not (0 < train_ratio < 1 and 0 <= val_ratio < 1 and train_ratio + val_ratio <= 1):
@@ -167,6 +205,49 @@ def split_dataset(images_dir, labels_json_path, output_dir,
         except Exception as e:
             logger.error(f"Failed to process data for {type}: {e}")
 
+def split_data(images_dir, labels_json_path, output_dir, 
+                  train_ratio=0.75, val_ratio=0.1, ablation=0, is_pose_estimation=False, 
+                  rename_images=False, classes="all"):
+    """
+    Splits a COCO dataset into training, validation, and testing sets based on given ratios.
+    """
+
+    logger.info("Loading COCO annotations...")
+    with open(labels_json_path, 'r') as f:
+        coco_data = json.load(f)
+
+    images_dir = Path(images_dir)
+    output_dir = Path(output_dir)
+
+    if not images_dir.exists():
+        logger.error(f"Images directory does not exist: {images_dir}")
+        return
+
+    coco_data = filter_coco_by_classes(coco_data, classes)
+
+    # Extract image and annotation details
+    images = coco_data.get('images', [])
+    annotations = coco_data.get('annotations', [])
+    categories = coco_data.get('categories', [])
+
+    # Log the count of annotated images and objects
+    logger.info(f"Total annotated images: {len(images)}")
+    logger.info(f"Total annotated objects: {len(annotations)}")
+
+    # Log the total amount of images in the images folder
+    total_images_in_folder = len(list(images_dir.glob('*')))
+    logger.info(f"Total images in the folder {images_dir}: {total_images_in_folder}")
+
+    if ablation > 0:
+        split_for_ablation(images, annotations, categories, images_dir, 
+                         output_dir, train_ratio, val_ratio, 
+                         is_pose_estimation, rename_images)
+
+    else:
+        split_train_test_val(images, annotations, categories, images_dir, 
+                         output_dir, train_ratio, val_ratio, 
+                         is_pose_estimation, rename_images)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Split COCO dataset into training, validation, and testing sets.")
@@ -178,6 +259,8 @@ if __name__ == "__main__":
     parser.add_argument("--pose_estimation", action='store_true', help="Flag to indicate if the dataset is for pose estimation")
     parser.add_argument("--rename_images", action="store_true", help="Assign new numerical IDs to image file names")
     parser.add_argument("--classes", nargs='+', help="List of class names to process (default: all classes)")
+    parser.add_argument("--ablation", type=int, default=0, help="Number of dataset chunks for ablation testing (default: 0, no ablation)")
+
 
     args = parser.parse_args()
 
