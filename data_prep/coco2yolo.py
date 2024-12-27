@@ -62,17 +62,18 @@ def convert_segmentation_masks(size, segmentation_mask, category_id):
         contours, _ = cv2.findContours(binary_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         
         norm_coords = contours[0].flatten()
+        norm_coords = norm_coords.astype(np.float32)
 
-        norm_coords[0::2] = norm_coords[0::2] / size[0]
-        norm_coords[1::2] = norm_coords[1::2] / size[1]
+        norm_coords[0::2] = np.round(norm_coords[0::2] / size[0], 5)
+        norm_coords[1::2] = np.round(norm_coords[1::2] / size[1], 5)
 
     # Otherwise, assume polygon format (alternative cases)
     else:
-        norm_coords = np.array(segmentation_mask)
-        norm_coords[0::2] = norm_coords[0::2] / size[0]
-        norm_coords[1::2] = norm_coords[1::2] / size[1]
+        norm_coords = np.array(segmentation_mask).astype(np.float32)
+        norm_coords[0::2] = np.round(norm_coords[0::2] / size[0], 5)
+        norm_coords[1::2] = np.round(norm_coords[1::2] / size[1], 5)
 
-    f"{category_id} {' '.join(map(str, norm_coords))}"
+    return f"{category_id} {' '.join(map(str, norm_coords))}"
 
 def convert_coco_to_kitti(size, box, category_name):
     x1, y1 = box[0], box[1]
@@ -130,6 +131,7 @@ def process_annotations(image_info, data, is_pose_estimation=False, mode="detect
 
 def create_annotation_files(annotations_by_image, output_dir):
     for img_filename, annotations in annotations_by_image.items():
+        
         txt_path = output_dir / (img_filename.stem + '.txt')
         try:
             with open(txt_path, 'w') as file:
@@ -176,6 +178,7 @@ names:
     except IOError as e:
         logger.error(f"Error writing to file {yaml_path}: {e}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process COCO annotations and create YOLO or KITTI dataset.")
     parser.add_argument("dataset_path", help="Path to the root directory of the dataset.")
@@ -188,3 +191,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
    
     main(**vars(args))
+
