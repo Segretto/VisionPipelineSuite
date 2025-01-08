@@ -10,7 +10,7 @@ from pycocotools import mask as maskUtils
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def main(dataset_path, dataset_splits, mode):
+def coco2yolo(dataset_path, dataset_splits, mode, ablation=False):
     """Process COCO annotations and generate YOLO or KITTI dataset files.
 
     Args:
@@ -21,9 +21,14 @@ def main(dataset_path, dataset_splits, mode):
     dataset_root = Path(dataset_path)
     
     for split in dataset_splits:
-        label_path = dataset_root / "labels" / split / 'coco.json'
+
+        if not ablation:
+            label_path = dataset_root / "labels" / split / 'coco.json'
+        else:
+            label_path = dataset_root / "labels" / 'coco.json'
+
         if not label_path.exists():
-            logger.warning(f"File not found: {label_path}")
+            logger.error(f"File not found: {label_path}")
             continue
 
         with open(label_path) as f:
@@ -35,7 +40,7 @@ def main(dataset_path, dataset_splits, mode):
 
         create_annotation_files(annotations, label_path.parent)
 
-    create_yaml_file(dataset_root, dataset_splits[0], mode)
+    create_yaml_file(dataset_root, data, mode, ablation)
 
 def convert_bounding_boxes(size, box, category_id):
     """Convert COCO bounding box format to YOLO format.
@@ -172,28 +177,31 @@ def create_annotation_files(annotations_by_image, output_dir):
         except IOError as e:
             logger.error(f"Error writing to file {txt_path}: {e}")
 
-def create_yaml_file(dataset_path, data_split, mode):
+def create_yaml_file(dataset_path, data, mode, ablation):
     """Generate a YAML configuration file for the dataset.
 
     Args:
         dataset_path (Path): Path to the root directory of the dataset.
-        data_split (str): Dataset split used for training (e.g., 'train').
+        data_train_split (str): Dataset split used for training (e.g., 'train').
         mode (str): Processing mode ('detection', 'segmentation', 'od_kitti', or 'pose_detection').
     """
-    label_path = dataset_path / "labels" / data_split / 'coco.json'
-    if not label_path.exists():
-        logger.error(f"File not found: {label_path}")
-        return
+    
+    if not ablation:
+        yaml_path = dataset_path + "data.yaml"
+        train_path =  "images/train"
+        val_path = "images/val"
+    else:
+        yaml_path = dataset_path.parent / dataset_path.name + ".yaml"
+        train_path = "images"
+        val_path = "../val/images"
 
-    with open(label_path) as f:
-        data = json.load(f)
     class_names = {category['id'] - 1: category['name'] for category in data['categories']}
     sorted_class_names = sorted(class_names.items())
     class_entries = "\n".join([f"  {id}: {name}" for id, name in sorted_class_names])
 
     yaml_content = f"""path: {dataset_path.absolute()}  # dataset root dir
-train: images/{data_split}  # train images (relative to 'path')
-val: images/val  # val images (relative to 'path')
+train: {train_path}  # train images (relative to 'path')
+val: {val_path}  # val images (relative to 'path')
 test:  # test images (optional)
 
 # Classes
@@ -208,7 +216,7 @@ names:
 
         yaml_content += f"\n\n# Keypoints\nkpt_shape: {kpt_shape}"
 
-    yaml_path = dataset_path / 'data.yaml'
+    # yaml_path = dataset_path / yaml_file_name
     try:
         with open(yaml_path, 'w') as file:
             file.write(yaml_content.strip())
@@ -225,4 +233,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    main(**vars(args))
+    coco2yolo(**vars(args))
