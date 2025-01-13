@@ -187,11 +187,11 @@ def create_yaml_file(dataset_path, data, mode, ablation):
     """
     
     if not ablation:
-        yaml_path = dataset_path + "data.yaml"
+        yaml_path = dataset_path / "data.yaml"
         train_path =  "images/train"
         val_path = "images/val"
     else:
-        yaml_path = dataset_path.parent / dataset_path.name + ".yaml"
+        yaml_path = dataset_path.parent / (dataset_path.name + ".yaml")
         train_path = "images"
         val_path = "../val/images"
 

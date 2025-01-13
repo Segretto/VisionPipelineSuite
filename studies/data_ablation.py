@@ -1,15 +1,17 @@
 import argparse
 from pathlib import Path
 import logging
+import sys
 
 # Import functions from the provided scripts
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_prep')))
 from data_prep.split_data import split_data
 from data_prep.coco2yolo import coco2yolo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def create_ablation_datasets(main_dataset_path, num_chunks, output_folder, test_dataset_path, mode="detection"):
+def create_ablation_datasets(main_dataset_path, num_chunks, output_folder, test_dataset_path, classes, mode="detection"):
     """
     Create ablation study datasets by splitting the main dataset into chunks
     and converting them into YOLO-compatible format.
@@ -39,7 +41,7 @@ def create_ablation_datasets(main_dataset_path, num_chunks, output_folder, test_
         val_ratio=0.1,    # Not relevant for ablation mode
         pose_estimation=False,
         rename_images=True,
-        classes=[],
+        classes=classes,
     )
 
     # Convert each ablation chunk to YOLO format
@@ -73,6 +75,7 @@ if __name__ == "__main__":
     parser.add_argument("test_dataset_path", help="Path to the test dataset folder.")
     parser.add_argument("--mode", choices=["detection", "segmentation", "pose_detection"], default="detection",
                         help="Processing mode for YOLO conversion ('detection', 'segmentation', 'pose_detection').")
+    parser.add_argument("--classes", nargs='+', default=[], help="List of class names to process (default: all classes)")
 
     args = parser.parse_args()
 
@@ -81,5 +84,6 @@ if __name__ == "__main__":
         num_chunks=args.num_chunks,
         output_folder=args.output_folder,
         test_dataset_path=args.test_dataset_path,
-        mode=args.mode
+        mode=args.mode,
+        classes=args.classes
     )
