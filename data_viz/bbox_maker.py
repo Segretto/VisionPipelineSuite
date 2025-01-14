@@ -83,8 +83,11 @@ def draw_bounding_boxes(img, labels, class_map):
     try:
         font = ImageFont.truetype("DroidSerif-Regular.ttf", size=26)
         legend_font = ImageFont.truetype("DroidSerif-Regular.ttf", size=36)
-    except IOError:
-        font = ImageFont.load_default()
+
+    except IOError as e:
+        font = ImageFont.load_default(size=26)
+        legend_font = ImageFont.load_default(size=36)
+        # print(f"Could not load custom font: {e}")
 
     for label in labels:
         cls_id = label['class_id']
@@ -212,7 +215,7 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
             'color': color
         })
 
-    # Square size is 80% of text height
+    # Square size is 80% of text heightimages_folder/
     square_size = int(0.6 * entries[-1]["text_height"])
 
     # Background for the legend (optional)

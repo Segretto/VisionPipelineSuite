@@ -1,8 +1,7 @@
 import argparse
 import numpy as np
-
+import cv2
 from pathlib import Path
-from shapely.geometry import Polygon
 from PIL import Image, ImageDraw, ImageFont
 
 def main(images_folder, labels_folder, output_folder):
@@ -21,23 +20,7 @@ def main(images_folder, labels_folder, output_folder):
 
     process_images(images_folder, labels_folder, output_folder)
 
-def B_spline_smoothing(polygon):
-    from scipy import interpolate
-
-    x = [pt[0] for pt in polygon]
-    y = [pt[1] for pt in polygon]
-
-    # Compute the B-spline representation of the polygon
-    # s=0 for interpolation; adjust s for smoothing
-    tck, u = interpolate.splprep([x, y], s=27, per=False)
-    out = interpolate.splev(u, tck)
-
-    x_new, y_new = out[0], out[1]
-
-    return list(zip(x_new, y_new))
-
 def process_images(images_folder, labels_folder, output_folder):
-
     class_map = {
         '0': {'name': 'soy', 'color': (252, 35, 97)},       
         '1': {'name': 'cotton', 'color': (7, 234, 250)}   
@@ -51,7 +34,6 @@ def process_images(images_folder, labels_folder, output_folder):
         return
 
     for image_path in images:
-
         label_file = labels_folder / (image_path.stem + '.txt')
         if not label_file.exists():
             print(f"Label file {label_file} does not exist for image {image_path.name}. Skipping this image.")
@@ -59,145 +41,201 @@ def process_images(images_folder, labels_folder, output_folder):
 
         labels = read_labels(label_file)
 
-        with Image.open(image_path) as img:
-
-            img_with_masks = draw_segmentation_masks(img, labels, class_map)
-
-            output_path = output_folder / (image_path.name)
-            img_with_masks.save(output_path)
-            print(f"Saved image with segmentation masks to {output_path}")
-
-def polygon_area(polygon):
-    n = len(polygon)
-    area = 0.0
-    for i in range(n):
-        x1, y1 = polygon[i]
-        x2, y2 = polygon[(i + 1) % n]
-        area += x1 * y2 - x2 * y1
-    return abs(area) / 2.0
-
-def filter_good_masks(labels, iou_threshold=0.6):
-    filtered_labels = []
-    used_indices = set()
-    for i, label_i in enumerate(labels):
-        if i in used_indices:
+        img = cv2.imread(str(image_path))
+        if img is None:
+            print(f"Failed to load image {image_path}.")
             continue
-        cls_id_i = label_i['class_id']
-        polygon_i = label_i['polygon']
-        area_i = label_i['area']
-        n_vertices_i = label_i['n_vertices']
-        is_best_mask = True
-        for j, label_j in enumerate(labels):
-            if i == j or j in used_indices:
-                continue
-            cls_id_j = label_j['class_id']
-            if cls_id_i != cls_id_j:
-                continue
-            polygon_j = label_j['polygon']
-            area_j = label_j['area']
-            n_vertices_j = label_j['n_vertices']
 
-            intersection_area = polygon_i.intersection(polygon_j).area
-            union_area = polygon_i.union(polygon_j).area
-            iou = intersection_area / union_area if union_area != 0 else 0
+        img_with_masks = draw_segmentation_masks(img, labels, class_map)
 
-            if iou > iou_threshold: 
-                if n_vertices_i >= n_vertices_j:
-                    used_indices.add(j)
-                else:
-                    is_best_mask = False
-                    used_indices.add(i)
-                    break
-        if is_best_mask:
-            filtered_labels.append(label_i)
-    return filtered_labels
-
+        output_path = output_folder / image_path.name
+        cv2.imwrite(str(output_path), img_with_masks)
+        print(f"Saved image with segmentation masks to {output_path}")
 
 def read_labels(label_file):
     labels = []
     with open(label_file, 'r') as f:
         for line in f:
             parts = line.strip().split()
-            if len(parts) < 3:
+            if len(parts) < 4:
                 print(f"Invalid label format in {label_file}: {line}")
                 continue
+
             cls_id = parts[0]
-            
-            # Assuming the rest are x and y coordinates in pairs
-            coordinates = parts[1:]
+            confidence = float(parts[-1])
+            coordinates = parts[1:-1]
+
             if len(coordinates) % 2 != 0:
                 print(f"Invalid number of coordinates in {label_file}: {line}")
                 continue
-            num_points = len(coordinates) // 2
 
+            num_points = len(coordinates) // 2
             polygon_coords = []
+
             for i in range(num_points):
-                x = float(coordinates[2*i])
-                y = float(coordinates[2*i + 1])
+                x = float(coordinates[2 * i])
+                y = float(coordinates[2 * i + 1])
                 polygon_coords.append((x, y))
-            
-            # Create a Shapely Polygon
-            polygon = Polygon(polygon_coords)
-            if not polygon.is_valid:
-                print(f"Invalid polygon in {label_file}: {line}")
-                continue
-            area = polygon.area
-            n_vertices = len(polygon.exterior.coords)
+
             labels.append({
                 'class_id': cls_id,
-                'polygon': polygon,
-                'area': area,
-                'n_vertices': n_vertices
+                'polygon': polygon_coords,
+                'confidence': confidence
             })
 
-    labels = filter_good_masks(labels)
     return labels
 
 def draw_segmentation_masks(img, labels, class_map):
-    # Convert the image to RGBA to support transparency
-    img = img.convert('RGBA')
-    img_width, img_height = img.size
-
-    overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
+    img_height, img_width, _ = img.shape
+    overlay = img.copy()
 
     try:
         font = ImageFont.truetype("DroidSerif-Regular.ttf", size=26)
         legend_font = ImageFont.truetype("DroidSerif-Regular.ttf", size=36)
     except IOError:
-        font = ImageFont.load_default()
-        legend_font = font
+        font = ImageFont.load_default(size=26)
+        legend_font = ImageFont.load_default(size=36)
+
+    for label in labels:
+        cls_id = label['class_id']
+        if cls_id not in class_map:
+            continue
+
+        class_info = class_map[cls_id]
+        color = tuple(class_info['color'])
+        confidence = label['confidence']
+
+        # Convert normalized coordinates to absolute pixel coordinates
+        abs_polygon = np.array(
+            [[int(x * img_width), int(y * img_height)] for x, y in label['polygon']],
+            dtype=np.int32
+        )
+
+        # Draw the mask using OpenCV
+        cv2.fillPoly(overlay, [abs_polygon], color[::-1])
+
+        # # Draw confidence value above the bounding box
+        # text = f"{confidence:.2f}"
+        # x_left, y_top, x_right, y_bottom = font.getbbox(text)
+        # text_width = abs(x_right - x_left)
+        # text_height = abs(y_bottom - y_top)
+
+        # text_x = int(x_min + (x_max - x_min) / 2 - text_width / 2)
+        # text_y = max(0, y_min - text_height - 6)
+
+        # shadow_offset = (1, 1)
+        # shadow_color = (0, 0, 0, 128)
+        # cv2.putText(
+        #     overlay,
+        #     text,
+        #     (text_x + shadow_offset[0], text_y + shadow_offset[1]),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.5,
+        #     shadow_color,
+        #     thickness=1,
+        #     lineType=cv2.LINE_AA
+        # )
+        # cv2.putText(
+        #     overlay,
+        #     text,
+        #     (text_x, text_y),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.5,
+        #     (255, 255, 255),
+        #     thickness=1,
+        #     lineType=cv2.LINE_AA
+        # )
+
+    # Blend the overlay with the original image
+    alpha = 0.4
+    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+
+    pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).convert('RGBA')
+    draw = ImageDraw.Draw(pil_img)
+
+    # Add legend
+    draw_confidence_values(draw, class_map, labels, img_width, img_height, font)
+    draw_legend(draw, class_map, legend_font, img_width, img_height)
+
+    img_with_legend = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGR)
+
+    return img_with_legend
+
+def draw_confidence_values(draw, class_map, labels, img_width, img_height, font):
 
     for label in labels:
         cls_id = label['class_id']
         if cls_id not in class_map:
             continue
         class_info = class_map[cls_id]
+    #     class_name = class_info['name']
         color = class_info['color']
+    #     # Convert normalized coordinates to absolute pixel coordinates
+    #     x_center = label['x_center'] * img_width
+    #     y_center = label['y_center'] * img_height
+    #     width = label['width'] * img_width
+    #     height = label['height'] * img_height
+        confidence = label['confidence']
 
-        polygon = label['polygon']
+    #     # Calculate bounding box coordinates
+    #     x_min = x_center - width / 2
+    #     y_min = y_center - height / 2
+    #     x_max = x_center + width / 2
+    #     y_max = y_center + height / 2
 
-        normalized_coords = list(polygon.exterior.coords)
-        
-        abs_polygon = [(x * img_width, y * img_height) for x, y in normalized_coords]
-        abs_polygon = B_spline_smoothing(abs_polygon)
+        abs_polygon = np.array(
+            [[int(x * img_width), int(y * img_height)] for x, y in label['polygon']],
+            dtype=np.int32
+        )
 
-        # Create a semi-transparent fill color
-        fill_opacity = 0.2
-        alpha = int(255 * fill_opacity)
-        fill_color = color + (alpha,)          # Semi-transparent fill color
-        outline_color = color + (255,)         # Fully opaque outline color
-
-        draw.polygon(abs_polygon, fill=fill_color, outline=outline_color, width=2)
+        # Calculate bounding box for the polygon
+        x_min = np.min(abs_polygon[:, 0])
+        y_min = np.min(abs_polygon[:, 1])
+        x_max = np.max(abs_polygon[:, 0])
+        y_max = np.max(abs_polygon[:, 1])
 
 
-    draw_legend(draw, class_map, legend_font, img_width, img_height)
+        # Prepare text
+        text = f"{confidence:.2f}"
 
-    img = Image.alpha_composite(img, overlay)
+        # Use font.getbbox() to get the size of the text
+        x_left, y_top, x_right, y_bottom = font.getbbox(text)
+        text_width = abs(x_right - x_left)
+        text_height = abs(y_bottom - y_top)
 
-    return img.convert('RGB')
+        bbox_xmid = (x_max - x_min)/2
+        bbox_ymid = (y_max - y_min)/2
 
+        # text_position = (x_min + bbox_xmid - text_width/2, y_min - text_height*1.161)
+        text_position = (x_min + bbox_xmid - text_width//2, y_min + bbox_ymid - text_height//2)
+        text_position_back = (x_min, y_min - text_height - 6)
+
+        # Ensure text is within image bounds
+        if text_position[1] < 0:
+            text_position = (x_min, y_max + 4)
+
+        # Define shadow offset and color
+        shadow_offset = (1, 1)  # (x_offset, y_offset)
+        shadow_color = (0, 0, 0, 128)  # Semi-transparent black
+
+        # Draw shadow text on the overlay
+        shadow_position = (text_position[0] + shadow_offset[0], text_position[1] + shadow_offset[1])
+        draw.text(
+            shadow_position,
+            text,
+            font=font,
+            fill=color
+        )
+
+        # Draw text on the overlay
+        draw.text(
+            text_position,
+            text,
+            fill=(239, 235, 245, 255),  # Bright white color with full opacity
+            font=font
+        )
 def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
+
 
     legend_x = 10  # Padding from the left edge
     legend_y = 10  # Padding from the top edge
@@ -219,7 +257,6 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
         text_width = abs(x_right - x_left)
         text_height = abs(y_bottom - y_top)
 
-        # Update maximum text width and total text height
         max_text_width = max(max_text_width, text_width)
         total_text_height += text_height + 5  # Adding spacing between entries
 
@@ -230,12 +267,12 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
             'color': color
         })
 
-    # Square size is 80% of text height
+    # Square size is 80% of text heightimages_folder/
     square_size = int(0.6 * entries[-1]["text_height"])
 
     # Background for the legend (optional)
-    legend_width =  square_size + max_text_width + 5*x_text_offset  # Padding and spacing
-    legend_height = total_text_height + 3*y_text_offset  # Padding
+    legend_width =  square_size + max_text_width + 5*x_text_offset  
+    legend_height = total_text_height + 3*y_text_offset 
     legend_background = [
         (legend_x, legend_y),
         (legend_x + legend_width, legend_y + legend_height)
@@ -250,34 +287,36 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
         text_height = entry['text_height']
         color = entry['color']
 
-        # Center the square vertically with the text
         square_offset = abs(text_height + 2*y_text_offset - square_size)/2
         square_y = current_y + square_offset
 
+        # Draw the color square
         square_coords = [
-            legend_x + x_text_offset,  # Padding from the left edge
+            legend_x + x_text_offset,
             square_y,
             legend_x + x_text_offset + square_size,
             square_y + square_size
         ]
         draw.rounded_rectangle(square_coords, radius=radius*0.1, fill=color + (255,), outline=None)
 
-        # Draw the text next to the square
         text_position = (legend_x + x_text_offset*3 + square_size, current_y)
         draw.text(
             text_position,
             text,
-            fill=(255, 255, 255, 255),
+            fill=(255, 255, 255, 255), 
             font=font
         )
 
-        current_y += text_height + y_text_offset  # Move to the next entry
+        current_y += text_height + y_text_offset
+
+    # img_with_legend = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGR)
+    # return img_with_legend
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Render segmentation masks on images.")
+    parser = argparse.ArgumentParser(description="Render segmentation masks on images using OpenCV.")
     parser.add_argument("images_folder", help="Path to the folder containing images.")
     parser.add_argument("labels_folder", help="Path to the folder containing label files.")
     parser.add_argument("output_folder", help="Path to the folder where output images will be saved.")
     args = parser.parse_args()
-    
+
     main(**vars(args))
