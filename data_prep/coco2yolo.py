@@ -10,7 +10,7 @@ from pycocotools import mask as maskUtils
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def coco2yolo(dataset_path, dataset_splits, mode, ablation=False):
+def coco2yolo(dataset_path, mode, custom_data_path=None):
     """Process COCO annotations and generate YOLO or KITTI dataset files.
 
     Args:
@@ -19,28 +19,29 @@ def coco2yolo(dataset_path, dataset_splits, mode, ablation=False):
         mode (str): Processing mode ('detection', 'segmentation', 'od_kitti', or 'pose_detection').
     """
     dataset_root = Path(dataset_path)
-    
-    for split in dataset_splits:
 
-        if not ablation:
-            label_path = dataset_root / "labels" / split / 'coco.json'
-        else:
-            label_path = dataset_root / "labels" / 'coco.json'
+    labels_dir = dataset_root / "labels"
+    splits = [f.name for f in labels_dir.iterdir() if f.is_dir()]
 
-        if not label_path.exists():
-            logger.error(f"File not found: {label_path}")
+    for split in splits:
+
+        coco_path = labels_dir / split / "coco.json"
+
+        if not coco_path.exists():
+            logger.error(f"File not found: {coco_path}")
             continue
 
-        with open(label_path) as f:
+        with open(coco_path) as f:
             data = json.load(f)
         
         image_info = {img['id']: img for img in data['images']}
         
         annotations = process_annotations(image_info, data, mode)
 
-        create_annotation_files(annotations, label_path.parent)
+        create_annotation_files(annotations, coco_path.parent)
 
-    create_yaml_file(dataset_root, data, mode, ablation)
+        if split not in ["val", "test"]:
+            create_yaml_file(dataset_root, custom_data_path, data, mode, split)
 
 def convert_bounding_boxes(size, box, category_id):
     """Convert COCO bounding box format to YOLO format.
@@ -177,7 +178,7 @@ def create_annotation_files(annotations_by_image, output_dir):
         except IOError as e:
             logger.error(f"Error writing to file {txt_path}: {e}")
 
-def create_yaml_file(dataset_path, data, mode, ablation):
+def create_yaml_file(dataset_path, custom_data_path, data, mode, split=None):
     """Generate a YAML configuration file for the dataset.
 
     Args:
@@ -185,20 +186,18 @@ def create_yaml_file(dataset_path, data, mode, ablation):
         data_train_split (str): Dataset split used for training (e.g., 'train').
         mode (str): Processing mode ('detection', 'segmentation', 'od_kitti', or 'pose_detection').
     """
-    
-    if not ablation:
-        yaml_path = dataset_path / "data.yaml"
-        train_path =  "images/train"
-        val_path = "images/val"
-    else:
-        yaml_path = dataset_path.parent / (dataset_path.name + ".yaml")
-        train_path = "images"
-        val_path = "../val/images"
+
+    yaml_path = dataset_path / (split + ".yaml")
+    train_path = "images/" + split
+    val_path = "images/val"
 
     class_names = {category['id'] - 1: category['name'] for category in data['categories']}
     sorted_class_names = sorted(class_names.items())
     class_entries = "\n".join([f"  {id}: {name}" for id, name in sorted_class_names])
 
+    if custom_data_path:
+        dataset_path = Path(custom_data_path)
+    
     yaml_content = f"""path: {dataset_path.absolute()}  # dataset root dir
 train: {train_path}  # train images (relative to 'path')
 val: {val_path}  # val images (relative to 'path')
@@ -216,7 +215,6 @@ names:
 
         yaml_content += f"\n\n# Keypoints\nkpt_shape: {kpt_shape}"
 
-    # yaml_path = dataset_path / yaml_file_name
     try:
         with open(yaml_path, 'w') as file:
             file.write(yaml_content.strip())
@@ -226,10 +224,11 @@ names:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process COCO annotations and create YOLO or KITTI dataset.")
-    parser.add_argument("dataset_path", help="Path to the root directory of the dataset.")
-    parser.add_argument("--dataset_splits", nargs='+', default=['train', 'val', 'test'], help="Custom dataset split for ablation studies")
+    parser.add_argument("dataset_path", type=str, help="Path to the root directory of the dataset.")
+    # parser.add_argument("--dataset_splits", nargs='+', default=['train', 'val', 'test'], help="Custom dataset split for ablation studies")
     parser.add_argument("--mode", choices=["detection", "segmentation", "od_kitti", "pose_detection"], default="detection",
                         help="Choose processing mode: 'detection' for bounding boxes, 'segmentation' for segmentation masks, 'pose_detection' for pose estimation.")
+    parser.add_argument("--custom_data_path", type=str, help=" A custom data path string to overwrite the yolo's data yaml file. Useful for running when training on different machines")
 
     args = parser.parse_args()
 
