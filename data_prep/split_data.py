@@ -52,7 +52,7 @@ def split_data(images_dir, coco_json_path, output_dir,
     elif ablation > 0:
         logger.info(f"Ablation mode enabled with {ablation} dataset chunks.")
         split_for_ablation(images, annotations, categories, images_dir, 
-                         output_dir, ablation, pose_estimation, 
+                         val_ratio, output_dir, ablation, pose_estimation, 
                          rename_images)
 
     else:
@@ -162,32 +162,53 @@ def log_object_count_per_class(coco_data):
 
 # TODO: Remove redundancy from both split functions
 def split_for_ablation(images, annotations, categories, images_dir, 
-                       output_dir, ablation, pose_estimation, 
+                       val_ratio, output_dir, ablation, is_pose_estimation, 
                        rename_images):
     
+    random.shuffle(images)
+    total_images = len(images)
+
+    val_size = int(total_images*val_ratio)
     
-    ablation_chunks = [int(len(images) * (i + 1) / ablation) for i in range(ablation)]
+    val_images = images[:val_size]
+    ablation_images = images[val_size:]
+
+    ablation_chunks = [int(len(ablation_images) * (i + 1) / ablation) for i in range(ablation)]
     logger.info(f"Ablation chunk sizes (number of images): {ablation_chunks}")
     
-    for _, chunk_size in enumerate(ablation_chunks, start=1):
+
+    ### validation split for the ablation study
+    images_output_path = output_dir / "images" / "val"
+    labels_output_path = output_dir / "labels" / "val"
+
+    updated_val_images = copy_images(val_images, images_dir, images_output_path, rename_images)
+    filtered_annotations = filtered_annotations(updated_val_images, annotations, is_pose_estimation)
+    coco_val = create_coco_subset(updated_val_images, filtered_annotations, categories)
+
+    with open(labels_output_path / "coco.json", 'w') as file:
+        json.dump(coco_val, file, indent=4)
+
+    ### ablation splits for increased training dataset size
+    for chunk_size in ablation_chunks:
         try:
-            chunk_images = images[:chunk_size]
-
+            chunk_images = ablation_images[:chunk_size]
+            chunk_percentage = f"{round(int(chunk_size / len(images)), 1) * 100}"
             # Create folder for this ablation chunk
-            ablation_output_path = output_dir / f"{int((chunk_size / len(images)) * 100)}_percent"
-            ablation_output_path.mkdir(parents=True, exist_ok=True)
 
-            images_output_path = ablation_output_path / "images"
+            images_output_path = output_dir / "images" / chunk_percentage 
             images_output_path.mkdir(parents=True, exist_ok=True)
 
-            labels_output_path = ablation_output_path / "labels"
+            labels_output_path = output_dir / "labels" / chunk_percentage 
             labels_output_path.mkdir(parents=True, exist_ok=True)
+
+            # ablation_output_path = output_dir / 
+            # ablation_output_path.mkdir(parents=True, exist_ok=True)
 
             # Copy images for this chunk
             updated_chunk_images = copy_images(chunk_images, images_dir, images_output_path, rename_images)
 
             # Filter annotations for this chunk
-            filtered_annotations = filter_annotations(updated_chunk_images, annotations, pose_estimation)
+            filtered_annotations = filter_annotations(updated_chunk_images, annotations, is_pose_estimation)
 
             coco_chunk = create_coco_subset(updated_chunk_images, filtered_annotations, categories)
 
@@ -199,7 +220,7 @@ def split_for_ablation(images, annotations, categories, images_dir,
             chunk_category_counts = log_object_count_per_class(coco_chunk)
 
             # Save metadata for this chunk
-            meta_file_path = ablation_output_path / "meta.txt"
+            meta_file_path = output_dir / f"{chunk_percentage}_meta.txt"
             with open(meta_file_path, 'w') as meta_file:
                 meta_file.write("Class-wise Object Counts:\n")
                 for category, count in chunk_category_counts.items():
@@ -213,7 +234,7 @@ def split_for_ablation(images, annotations, categories, images_dir,
 
 def split_train_test_val(images, annotations, categories, images_dir, 
                          output_dir, train_ratio, val_ratio, 
-                         pose_estimation, rename_images):
+                         is_pose_estimation, rename_images):
 
     # Validate ratios
     if not (0 < train_ratio < 1 and 0 <= val_ratio < 1 and train_ratio + val_ratio <= 1):
@@ -239,7 +260,7 @@ def split_train_test_val(images, annotations, categories, images_dir,
 
             updated_images_set = copy_images(images_set, images_dir, images_output_path, rename_images)
 
-            filtered_annotations = filter_annotations(updated_images_set, annotations, pose_estimation)
+            filtered_annotations = filter_annotations(updated_images_set, annotations, is_pose_estimation)
 
             coco_file = create_coco_subset(updated_images_set, filtered_annotations, categories)
             with open(labels_output_path / "coco.json", 'w') as file:
