@@ -1,13 +1,14 @@
 #!/bin/bash
 # Setup parameters
 PROJECT="/home/segreto/Documents/Runs"
-NAME="SoyCotton-OD-2"
+NAME="SoyCotton-OD-L"
+EXIST_OK="True"
 
 DATA="/home/segreto/Documents/Data/SoyCotton-FinalSplit-OD/data.yaml"
-MODEL="yolo11m.pt"
+MODEL="yolo11l.pt"
 
-BATCH="14"
-WORKERS="32"
+BATCH="10"
+WORKERS="24"
 DEVICE="0"
 CACHE="True"
 
@@ -30,7 +31,6 @@ DROPOUT="0.04"
 DYNAMIC="False"
 EPOCHS="250"
 ERASING="0.4"
-EXIST_OK="True"
 FLIPLR="0.5"
 FLIPUD="0.0"
 FORMAT="torchscript"

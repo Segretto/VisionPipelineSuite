@@ -6,6 +6,7 @@ import numpy as np
 
 from pathlib import Path
 from pycocotools import mask as maskUtils
+from joblib import Parallel, delayed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def coco2yolo(dataset_path, mode, custom_data_path=None):
         
         image_info = {img['id']: img for img in data['images']}
         
-        annotations = process_annotations(image_info, data, mode)
+        annotations = process_annotations_parallel(image_info, data, mode)
 
         create_annotation_files(annotations, coco_path.parent)
 
@@ -81,30 +82,90 @@ def convert_pose_keypoints(size, box, keypoints, category_id):
     keypoints_str = ' '.join([f"{kp[0]} {kp[1]} {kp[2]}" for kp in yolo_keypoints])
     return f"{yolo_bbox} {keypoints_str}"
 
-def convert_segmentation_masks(size, segmentation_mask, category_id):
-    """Convert COCO segmentation masks to YOLO format.
+def convert_segmentation_masks(size, segmentation_mask, category_id, min_pixels=0):
+    """Convert COCO segmentation masks (RLE or polygon) to YOLO format with filtering by pixel area.
 
     Args:
         size (tuple): Image dimensions (width, height).
         segmentation_mask (dict or list): COCO segmentation mask (RLE or polygon).
         category_id (int): Category ID for the object.
+        min_pixels (int): Minimum number of pixels required for a mask region to be included.
 
     Returns:
-        str: YOLO formatted segmentation mask.
+        str: The mask's annotation string line.
     """
-    if isinstance(segmentation_mask, dict) and 'counts' in segmentation_mask:
+    width, height = size
+    annotation_line = f"{category_id}"
+
+    if isinstance(segmentation_mask, dict) and 'counts' in segmentation_mask:  # RLE mask
         rle = maskUtils.frPyObjects(segmentation_mask, segmentation_mask['size'][0], segmentation_mask['size'][1])
         binary_mask = maskUtils.decode(rle)
-        contours, _ = cv2.findContours(binary_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        norm_coords = contours[0].flatten().astype(np.float32)
-        norm_coords[0::2] = np.round(norm_coords[0::2] / size[0], 5)
-        norm_coords[1::2] = np.round(norm_coords[1::2] / size[1], 5)
-    else:
-        norm_coords = np.array(segmentation_mask).astype(np.float32)
-        norm_coords[0::2] = np.round(norm_coords[0::2] / size[0], 5)
-        norm_coords[1::2] = np.round(norm_coords[1::2] / size[1], 5)
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    return f"{category_id} {' '.join(map(str, norm_coords))}"
+        for contour in contours:
+            if cv2.contourArea(contour) <= min_pixels:  # Filter by the area of the contour
+                continue
+            norm_coords = contour.flatten().astype(np.float32)
+            norm_coords[0::2] = np.round(norm_coords[0::2] / width, 5)
+            norm_coords[1::2] = np.round(norm_coords[1::2] / height, 5)
+            annotation_line += ' ' + ' '.join(map(str, norm_coords))
+
+    elif isinstance(segmentation_mask, list):  # Polygon format
+        for polygon in segmentation_mask:
+            poly_array = np.array(polygon).reshape(-1, 2)  # Reshape into a 2D array
+            if cv2.contourArea(poly_array) <= min_pixels:  # Filter by the area of the polygon
+                continue
+            norm_coords = np.array(polygon).astype(np.float32)
+            norm_coords[0::2] = np.round(norm_coords[0::2] / width, 5)
+            norm_coords[1::2] = np.round(norm_coords[1::2] / height, 5)
+            annotation_line += ' ' + ' '.join(map(str, norm_coords))
+
+    return annotation_line
+
+def convert_segmentation_masks_direct(size, segmentation_mask, category_id, min_pixels=20):
+    """Convert COCO segmentation masks (RLE or polygon) to YOLO format string, optimized for speed.
+
+    Args:
+        size (tuple): Image dimensions (width, height).
+        segmentation_mask (dict or list): COCO segmentation mask (RLE or polygon).
+        category_id (int): Category ID for the object.
+        min_pixels (int): Minimum number of pixels required for a mask region to be included.
+
+    Returns:
+        str: YOLO formatted segmentation mask as a single line.
+    """
+    width, height = size
+    annotation_line = f"{category_id}"
+
+    if isinstance(segmentation_mask, dict) and 'counts' in segmentation_mask:  # RLE mask
+        # Decode RLE into binary mask
+        rle = maskUtils.frPyObjects(segmentation_mask, segmentation_mask['size'][0], segmentation_mask['size'][1])
+        binary_mask = maskUtils.decode(rle)
+        binary_mask = filter_small_regions(binary_mask, 50)
+
+        # Find all non-zero pixels in the mask
+        rows, cols = np.nonzero(binary_mask)  # Faster than np.argwhere
+
+        norm_coords = np.vstack((cols / width, rows / height)).T.flatten()
+        annotation_line += ' ' + ' '.join(map(str, norm_coords))
+
+    elif isinstance(segmentation_mask, list):  # Polygon format
+        for polygon in segmentation_mask:
+            poly_array = np.array(polygon).reshape(-1, 2)  # Reshape into a 2D array
+            if len(poly_array) <= min_pixels:  # Filter small polygons
+                continue
+
+            # Normalize polygon coordinates directly
+            norm_coords = []
+            for x, y in poly_array:
+                norm_coords.append(round(x / width, 5))  # Normalize x
+                norm_coords.append(round(y / height, 5))  # Normalize y
+
+            # Add normalized coordinates to the annotation line
+            annotation_line += ' ' + ' '.join(map(str, norm_coords))
+
+    return annotation_line
+    
 
 def convert_coco_to_kitti(size, box, category_name):
     """Convert COCO bounding box format to KITTI format.
@@ -153,7 +214,7 @@ def process_annotations(image_info, data, mode):
                     annotation_line = convert_bounding_boxes(img_size, coco_bbox, category_id)        
 
             case "segmentation":
-                annotation_line = convert_segmentation_masks(img_size, ann["segmentation"], category_id)
+                annotation_line = convert_segmentation_masks_direct(img_size, ann["segmentation"], category_id)
 
             case "od_kitti":
                 annotation_line = convert_coco_to_kitti(img_size, coco_bbox, category_name)
@@ -162,6 +223,79 @@ def process_annotations(image_info, data, mode):
     
     return annotations_by_image
 
+def process_annotations_parallel(image_info, data, mode, n_jobs=-1):
+    """Process COCO annotations into the desired format based on mode, with parallelization.
+
+    Args:
+        image_info (dict): Mapping of image IDs to image metadata.
+        data (dict): COCO dataset JSON data.
+        mode (str): Processing mode ('detection', 'segmentation', 'od_kitti', or 'pose_detection').
+        n_jobs (int): Number of parallel jobs to run. Default is -1 (use all available processors).
+
+    Returns:
+        dict: Mapping of image filenames to annotation lines.
+    """
+    # Process all annotations in parallel
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(process_single_annotation)(ann, image_info, data, mode) for ann in data['annotations']
+    )
+
+    # Group annotations by image filename
+    annotations_by_image = {}
+    for img_filename, annotation_line in results:
+        if img_filename not in annotations_by_image:
+            annotations_by_image[img_filename] = []
+        annotations_by_image[img_filename].append(annotation_line)
+    
+    return annotations_by_image
+
+def process_single_annotation(ann, image_info, data, mode):
+    """Process a single COCO annotation based on mode."""
+    img_id = ann['image_id']
+    coco_bbox = ann['bbox']
+    category_id = ann['category_id'] - 1
+    category_name = next((cat['name'] for cat in data['categories'] if cat['id'] == ann['category_id']), "unknown")
+    img_filename = Path(image_info[img_id]['file_name'])
+    img_size = (image_info[img_id]['width'], image_info[img_id]['height'])
+
+    match mode:
+        case "detection" | "pose_detection":
+            if mode.startswith("pose") and 'keypoints' in ann:
+                annotation_line = convert_pose_keypoints(img_size, coco_bbox, ann['keypoints'], category_id)
+            else:
+                annotation_line = convert_bounding_boxes(img_size, coco_bbox, category_id)
+        
+        case "segmentation":
+            annotation_line = convert_segmentation_masks_direct(img_size, ann["segmentation"], category_id)
+        
+        case "od_kitti":
+            annotation_line = convert_coco_to_kitti(img_size, coco_bbox, category_name)
+    
+    return img_filename, annotation_line
+
+def filter_small_regions(binary_mask, min_pixels):
+    """Remove small blob regions from a binary mask.
+
+    Args:
+        binary_mask (numpy.ndarray): Binary mask with regions to filter.
+        min_pixels (int): Minimum number of pixels required to retain a region.
+
+    Returns:
+        numpy.ndarray: Filtered binary mask with small regions removed.
+    """
+    # Perform connected components analysis
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
+
+    # Create an empty mask to store the filtered result
+    filtered_mask = np.zeros_like(binary_mask, dtype=np.uint8)
+
+    # Iterate over each region, skipping the background (label 0)
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]  # Get the area of the region
+        if area > min_pixels:  # Retain regions larger than the threshold
+            filtered_mask[labels == i] = 1
+
+    return filtered_mask
 def create_annotation_files(annotations_by_image, output_dir):
     """Write annotation files for each image.
 
@@ -225,7 +359,6 @@ names:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process COCO annotations and create YOLO or KITTI dataset.")
     parser.add_argument("dataset_path", type=str, help="Path to the root directory of the dataset.")
-    # parser.add_argument("--dataset_splits", nargs='+', default=['train', 'val', 'test'], help="Custom dataset split for ablation studies")
     parser.add_argument("--mode", choices=["detection", "segmentation", "od_kitti", "pose_detection"], default="detection",
                         help="Choose processing mode: 'detection' for bounding boxes, 'segmentation' for segmentation masks, 'pose_detection' for pose estimation.")
     parser.add_argument("--custom_data_path", type=str, help=" A custom data path string to overwrite the yolo's data yaml file. Useful for running when training on different machines")

@@ -4,7 +4,7 @@ import cv2
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-def main(images_folder, labels_folder, output_folder):
+def main(images_folder, labels_folder, output_folder, resize, gt=False):
     images_folder = Path(images_folder)
     labels_folder = Path(labels_folder)
     output_folder = Path(output_folder)
@@ -16,14 +16,16 @@ def main(images_folder, labels_folder, output_folder):
         print(f"Labels folder {labels_folder} does not exist.")
         return
 
+    resize_dims = parse_resize_arg(resize)
+
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    process_images(images_folder, labels_folder, output_folder)
+    process_images(images_folder, labels_folder, output_folder, resize_dims, gt)
 
-def process_images(images_folder, labels_folder, output_folder):
+def process_images(images_folder, labels_folder, output_folder, resize_dims, gt):
     class_map = {
-        '0': {'name': 'soy', 'color': (252, 35, 97)},       
-        '1': {'name': 'cotton', 'color': (7, 234, 250)}   
+        '0': {'name': 'soy', 'color': (252, 236, 3)},       
+        '1': {'name': 'cotton', 'color': (201, 14, 230)}   
     }
 
     image_extensions = ['.jpg', '.jpeg', '.png']
@@ -39,20 +41,26 @@ def process_images(images_folder, labels_folder, output_folder):
             print(f"Label file {label_file} does not exist for image {image_path.name}. Skipping this image.")
             continue
 
-        labels = read_labels(label_file)
+        labels = read_labels(label_file, gt)
 
         img = cv2.imread(str(image_path))
         if img is None:
             print(f"Failed to load image {image_path}.")
             continue
 
-        img_with_masks = draw_segmentation_masks(img, labels, class_map)
+                # ADD THIS RESIZE LOGIC:
+        if resize_dims is not None:
+            w, h = resize_dims
+            # cv2.resize expects (width, height) in that order
+            img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+
+        img_with_masks = draw_segmentation_masks(img, labels, class_map, gt)
 
         output_path = output_folder / image_path.name
         cv2.imwrite(str(output_path), img_with_masks)
         print(f"Saved image with segmentation masks to {output_path}")
 
-def read_labels(label_file):
+def read_labels(label_file, gt):
     labels = []
     with open(label_file, 'r') as f:
         for line in f:
@@ -60,10 +68,18 @@ def read_labels(label_file):
             if len(parts) < 4:
                 print(f"Invalid label format in {label_file}: {line}")
                 continue
-
+            
             cls_id = parts[0]
-            confidence = float(parts[-1])
-            coordinates = parts[1:-1]
+            
+            if gt:
+                # print("Ground-Truth segmentation masks")
+                coordinates = parts[1:]
+                confidence = 1
+            
+            else:
+                # print("Predicted segmentation masks")
+                coordinates = parts[1:-1]
+                confidence = float(parts[-1])
 
             if len(coordinates) % 2 != 0:
                 print(f"Invalid number of coordinates in {label_file}: {line}")
@@ -73,9 +89,12 @@ def read_labels(label_file):
             polygon_coords = []
 
             for i in range(num_points):
-                x = float(coordinates[2 * i])
-                y = float(coordinates[2 * i + 1])
-                polygon_coords.append((x, y))
+                try:
+                    x = float(coordinates[2 * i])
+                    y = float(coordinates[2 * i + 1])
+                    polygon_coords.append((x, y))
+                except Exception as e:
+                    print(f"Label file: {label_file}. Error {e} in line {line}")
 
             labels.append({
                 'class_id': cls_id,
@@ -85,7 +104,7 @@ def read_labels(label_file):
 
     return labels
 
-def draw_segmentation_masks(img, labels, class_map):
+def draw_segmentation_masks(img, labels, class_map, gt, alpha=0.6, conf_threshold=0.5):
     img_height, img_width, _ = img.shape
     overlay = img.copy()
 
@@ -105,83 +124,68 @@ def draw_segmentation_masks(img, labels, class_map):
         color = tuple(class_info['color'])
         confidence = label['confidence']
 
-        # Convert normalized coordinates to absolute pixel coordinates
-        abs_polygon = np.array(
-            [[int(x * img_width), int(y * img_height)] for x, y in label['polygon']],
-            dtype=np.int32
-        )
+        if confidence < conf_threshold:
+            continue
 
-        # Draw the mask using OpenCV
-        cv2.fillPoly(overlay, [abs_polygon], color[::-1])
+        polygon = np.array(label['polygon'], dtype=np.float32)
+        abs_coords = (polygon * [img_width, img_height]).astype(np.int32)
 
-        # # Draw confidence value above the bounding box
-        # text = f"{confidence:.2f}"
-        # x_left, y_top, x_right, y_bottom = font.getbbox(text)
-        # text_width = abs(x_right - x_left)
-        # text_height = abs(y_bottom - y_top)
+        # else:
+        # Convert normalized coordinates to absolute pixel coordinates as a NumPy array
 
-        # text_x = int(x_min + (x_max - x_min) / 2 - text_width / 2)
-        # text_y = max(0, y_min - text_height - 6)
+        # Ensure all coordinates are within valid bounds
+        abs_coords[:, 0] = np.clip(abs_coords[:, 0], 0, img_width - 1)  # Clip x values
+        abs_coords[:, 1] = np.clip(abs_coords[:, 1], 0, img_height - 1)  # Clip y values
 
-        # shadow_offset = (1, 1)
-        # shadow_color = (0, 0, 0, 128)
-        # cv2.putText(
-        #     overlay,
-        #     text,
-        #     (text_x + shadow_offset[0], text_y + shadow_offset[1]),
-        #     cv2.FONT_HERSHEY_SIMPLEX,
-        #     0.5,
-        #     shadow_color,
-        #     thickness=1,
-        #     lineType=cv2.LINE_AA
-        # )
-        # cv2.putText(
-        #     overlay,
-        #     text,
-        #     (text_x, text_y),
-        #     cv2.FONT_HERSHEY_SIMPLEX,
-        #     0.5,
-        #     (255, 255, 255),
-        #     thickness=1,
-        #     lineType=cv2.LINE_AA
-        # )
+        # Create a blank binary mask
+        binary_mask = np.zeros((img_height, img_width), dtype=np.uint8)
+
+        # Use advanced indexing to set the mask pixels
+        binary_mask[abs_coords[:, 1], abs_coords[:, 0]] = 1
+
+        # Apply the binary mask directly to the overlay
+        overlay[binary_mask == 1] = color[::-1]
+        
+        if not gt:
+
+            cv2.fillPoly(binary_mask, [abs_coords], 1)
+
+            contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            cv2.fillPoly(overlay, contours, color[::-1])
+
 
     # Blend the overlay with the original image
-    alpha = 0.4
     cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
 
     pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).convert('RGBA')
     draw = ImageDraw.Draw(pil_img)
 
     # Add legend
-    draw_confidence_values(draw, class_map, labels, img_width, img_height, font)
+    if not gt:
+        draw_confidence_values(draw, class_map, labels, img_width, img_height, font, conf_threshold)
+    
     draw_legend(draw, class_map, legend_font, img_width, img_height)
 
     img_with_legend = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGR)
 
     return img_with_legend
 
-def draw_confidence_values(draw, class_map, labels, img_width, img_height, font):
-
+def draw_confidence_values(draw, class_map, labels, img_width, img_height, font, conf_threshold):
+    
+    colors = []
+    for _, cls_info in class_map.items():
+        colors.append(cls_info['color'][::-1] + (255,))
+    
     for label in labels:
         cls_id = label['class_id']
         if cls_id not in class_map:
             continue
-        class_info = class_map[cls_id]
-    #     class_name = class_info['name']
-        color = class_info['color']
-    #     # Convert normalized coordinates to absolute pixel coordinates
-    #     x_center = label['x_center'] * img_width
-    #     y_center = label['y_center'] * img_height
-    #     width = label['width'] * img_width
-    #     height = label['height'] * img_height
+
         confidence = label['confidence']
 
-    #     # Calculate bounding box coordinates
-    #     x_min = x_center - width / 2
-    #     y_min = y_center - height / 2
-    #     x_max = x_center + width / 2
-    #     y_max = y_center + height / 2
+        if confidence < conf_threshold:
+            continue
 
         abs_polygon = np.array(
             [[int(x * img_width), int(y * img_height)] for x, y in label['polygon']],
@@ -193,7 +197,6 @@ def draw_confidence_values(draw, class_map, labels, img_width, img_height, font)
         y_min = np.min(abs_polygon[:, 1])
         x_max = np.max(abs_polygon[:, 0])
         y_max = np.max(abs_polygon[:, 1])
-
 
         # Prepare text
         text = f"{confidence:.2f}"
@@ -224,15 +227,15 @@ def draw_confidence_values(draw, class_map, labels, img_width, img_height, font)
             shadow_position,
             text,
             font=font,
-            fill=color
+            fill=colors[1]
         )
 
         # Draw text on the overlay
         draw.text(
             text_position,
             text,
-            fill=(239, 235, 245, 255),  # Bright white color with full opacity
-            font=font
+            font=font,
+            fill=colors[0]  # Bright white color with full opacity
         )
 def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
 
@@ -309,14 +312,35 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
 
         current_y += text_height + y_text_offset
 
-    # img_with_legend = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGR)
-    # return img_with_legend
+def parse_resize_arg(resize_arg):
+    """
+    Parse the '--resize' argument.
+    If the argument is 'None', return None.
+    Otherwise, expect the format 'widthxheight' and return (width, height) as integers.
+    """
+    if resize_arg is None or resize_arg.lower() == "none":
+        return None
+    
+    try:
+        w, h = resize_arg.lower().split("x")
+        return (int(w), int(h))
+    except ValueError:
+        print(f"Invalid format for --resize: '{resize_arg}'. Use 'widthxheight' or 'None'.")
+        return None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render segmentation masks on images using OpenCV.")
     parser.add_argument("images_folder", help="Path to the folder containing images.")
     parser.add_argument("labels_folder", help="Path to the folder containing label files.")
     parser.add_argument("output_folder", help="Path to the folder where output images will be saved.")
+    parser.add_argument("--gt", action='store_true', default=False, help="Ground truth masks flag.")
+    parser.add_argument(
+        "--resize", 
+        default="None", 
+        help="Resize images to 'widthxheight'. With 'None' the option to not resize"
+    )
+    
+    
     args = parser.parse_args()
 
     main(**vars(args))

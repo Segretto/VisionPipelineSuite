@@ -1,9 +1,10 @@
 import argparse
+import cv2
 
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-def main(images_folder, labels_folder, output_folder):
+def bbox_maker(images_folder, labels_folder, output_folder, resize, gt):
     images_folder = Path(images_folder)
     labels_folder = Path(labels_folder)
     output_folder = Path(output_folder)
@@ -17,15 +18,16 @@ def main(images_folder, labels_folder, output_folder):
 
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    process_images(images_folder, labels_folder, output_folder)
+    resize_dims = parse_resize_arg(resize)
+    process_images(images_folder, labels_folder, output_folder, resize_dims, gt)
 
-def process_images(images_folder, labels_folder, output_folder):
+def process_images(images_folder, labels_folder, output_folder, resize_dims, gt):
 
     # TODO: Generalize color/class mapping
     # This is hardcoded color map for only two classes
     class_map = {
-        '0': {'name': 'soy', 'color': (252, 35, 97)},      
-        '1': {'name': 'cotton', 'color': (7, 234, 250)}
+        '0': {'name': 'soy', 'color': (252, 236, 3)},       
+        '1': {'name': 'cotton', 'color': (201, 14, 230)} 
     }
 
     image_extensions = ['.jpg', '.jpeg', '.png']
@@ -42,50 +44,95 @@ def process_images(images_folder, labels_folder, output_folder):
             print(f"Label file {label_file} does not exist for image {image_path.name}. Skipping this image.")
             continue
 
-        labels = read_labels(label_file)
+        labels = read_labels(label_file, gt)
+        # img = cv2.imread(str(image_path))
+        img = Image.open(image_path)
 
-        with Image.open(image_path) as img:
+        if resize_dims is not None:
+            w, h = resize_dims
+            # PIL's resize expects (width, height)
+            # For high-quality downsampling, use Image.LANCZOS (similar to cv2.INTER_AREA)
+            img = img.resize((w, h), Image.LANCZOS)
 
-            img_with_boxes = draw_bounding_boxes(img, labels, class_map)
+        # with Image.open(image_path) as img:
 
-            output_path = output_folder / (image_path.name)
-            img_with_boxes.save(output_path)
-            print(f"Saved image with bounding boxes to {output_path}")
+        img_with_boxes = draw_bounding_boxes(img, labels, class_map, gt)
 
-def read_labels(label_file):
+        output_path = output_folder / (image_path.name)
+        img_with_boxes.save(output_path)
+        print(f"Saved image with bounding boxes to {output_path}")
+
+def parse_resize_arg(resize_arg):
+    """
+    Parse the '--resize' argument.
+    If the argument is 'None', return None.
+    Otherwise, expect the format 'widthxheight' and return (width, height) as integers.
+    """
+    if resize_arg is None or resize_arg.lower() == "none":
+        return None
+    
+    try:
+        w, h = resize_arg.lower().split("x")
+        return (int(w), int(h))
+    except ValueError:
+        print(f"Invalid format for --resize: '{resize_arg}'. Use 'widthxheight' or 'None'.")
+        return None
+
+
+def read_labels(label_file, gt):
     labels = []
     with open(label_file, 'r') as f:
         for line in f:
             parts = line.strip().split()
-            if len(parts) != 6:
+            if len(parts) == 6 and not gt:
+
+                cls, x_center, y_center, width, height, confidence = parts
+                labels.append({
+                    'class_id': cls,
+                    'x_center': float(x_center),
+                    'y_center': float(y_center),
+                    'width': float(width),
+                    'height': float(height),
+                    'confidence': float(confidence)
+                })
+            
+            elif len(parts) == 5 and gt:
+                cls, x_center, y_center, width, height = parts
+                labels.append({
+                    'class_id': cls,
+                    'x_center': float(x_center),
+                    'y_center': float(y_center),
+                    'width': float(width),
+                    'height': float(height),
+                })
+
+            else:
                 print(f"Invalid label format in {label_file}: {line}")
-                continue
-            cls, x_center, y_center, width, height, confidence = parts
-            labels.append({
-                'class_id': cls,
-                'x_center': float(x_center),
-                'y_center': float(y_center),
-                'width': float(width),
-                'height': float(height),
-                'confidence': float(confidence)
-            })
+
+
     return labels
 
-def draw_bounding_boxes(img, labels, class_map):
+def draw_bounding_boxes(img, labels, class_map, gt):
     # Convert the image to RGBA to support transparency
     img = img.convert('RGBA')
     img_width, img_height = img.size
+    # overlay = img.copy()
 
     overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
+    colors = []
+    for _, cls_info in class_map.items():
+        colors.append(cls_info['color'][::-1] + (255,))
+    print(colors)
+    
     # Load text font
     try:
-        font = ImageFont.truetype("DroidSerif-Regular.ttf", size=26)
+        font = ImageFont.truetype("DroidSerif-Regular.ttf", size=32)
         legend_font = ImageFont.truetype("DroidSerif-Regular.ttf", size=36)
 
     except IOError as e:
-        font = ImageFont.load_default(size=26)
+        font = ImageFont.load_default(size=30)
         legend_font = ImageFont.load_default(size=36)
         # print(f"Could not load custom font: {e}")
 
@@ -101,7 +148,6 @@ def draw_bounding_boxes(img, labels, class_map):
         y_center = label['y_center'] * img_height
         width = label['width'] * img_width
         height = label['height'] * img_height
-        confidence = label['confidence']
 
         # Calculate bounding box coordinates
         x_min = x_center - width / 2
@@ -131,44 +177,46 @@ def draw_bounding_boxes(img, labels, class_map):
             width=3
         )
 
-        # Prepare text
-        text = f"{confidence:.2f}"
+        # Confidence values rendering
+        if not gt:
+            confidence = label['confidence']
+            text = f"{confidence:.2f}"
 
-        # Use font.getbbox() to get the size of the text
-        x_left, y_top, x_right, y_bottom = font.getbbox(text)
-        text_width = abs(x_right - x_left)
-        text_height = abs(y_bottom - y_top)
+            # Use font.getbbox() to get the size of the text
+            x_left, y_top, x_right, y_bottom = font.getbbox(text)
+            text_width = abs(x_right - x_left)
+            text_height = abs(y_bottom - y_top)
 
-        bbox_xmid = (x_max - x_min)/2
+            bbox_xmid = (x_max - x_min)/2
 
-        # text_position = (x_min + bbox_xmid - text_width/2, y_min - text_height*1.161)
-        text_position = (x_min + bbox_xmid - text_width//2, y_min - text_height - 6)
-        text_position_back = (x_min, y_min - text_height - 6)
+            # text_position = (x_min + bbox_xmid - text_width/2, y_min - text_height*1.161)
+            text_position = (x_min + bbox_xmid - text_width//2, y_min - 2*text_height)
+            text_position_back = (x_min, y_min - text_height - 6)
 
-        # Ensure text is within image bounds
-        if text_position[1] < 0:
-            text_position = (x_min, y_max + 4)
+            # Ensure text is within image bounds
+            if text_position[1] < 0:
+                text_position = (x_min + bbox_xmid - text_width//2, y_max)
 
-        # Define shadow offset and color
-        shadow_offset = (1, 1)  # (x_offset, y_offset)
-        shadow_color = (0, 0, 0, 128)  # Semi-transparent black
+            # Define shadow offset and color
+            shadow_offset = (1, 1)  # (x_offset, y_offset)
+            shadow_color = (0, 0, 0, 128)  # Semi-transparent black
 
-        # Draw shadow text on the overlay
-        shadow_position = (text_position[0] + shadow_offset[0], text_position[1] + shadow_offset[1])
-        draw.text(
-            shadow_position,
-            text,
-            font=font,
-            fill=color
-        )
+            # Draw shadow text on the overlay
+            shadow_position = (text_position[0] + shadow_offset[0], text_position[1] + shadow_offset[1])
+            draw.text(
+                shadow_position,
+                text,
+                font=font,
+                fill=colors[1]
+            )
 
-        # Draw text on the overlay
-        draw.text(
-            text_position,
-            text,
-            fill=(239, 235, 245, 255),  # Bright white color with full opacity
-            font=font
-        )
+            # Draw text on the overlay
+            draw.text(
+                text_position,
+                text,
+                font=font,
+                fill=colors[0],
+            )
 
     # Draw the legend
     draw_legend(draw, class_map, legend_font, img_width, img_height)
@@ -262,7 +310,13 @@ if __name__ == "__main__":
     parser.add_argument("images_folder", help="Path to the folder containing images.")
     parser.add_argument("labels_folder", help="Path to the folder containing label files.")
     parser.add_argument("output_folder", help="Path to the folder where output images will be saved.")
-    
+    parser.add_argument("--gt", action='store_true', default=False, help="Ground truth masks flag.")
+    parser.add_argument(
+        "--resize", 
+        default="None", 
+        help="Resize images to 'widthxheight'. With 'None' the option to not resize"
+    )
+
     args = parser.parse_args()
     
-    main(**vars(args))
+    bbox_maker(**vars(args))
