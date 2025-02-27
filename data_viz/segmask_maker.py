@@ -48,7 +48,6 @@ def process_images(images_folder, labels_folder, output_folder, resize_dims, gt)
             print(f"Failed to load image {image_path}.")
             continue
 
-                # ADD THIS RESIZE LOGIC:
         if resize_dims is not None:
             w, h = resize_dims
             # cv2.resize expects (width, height) in that order
@@ -128,7 +127,7 @@ def draw_segmentation_masks(img, labels, class_map, gt, alpha=0.6, conf_threshol
             continue
 
         polygon = np.array(label['polygon'], dtype=np.float32)
-        abs_coords = (polygon * [img_width, img_height]).astype(np.int32)
+        abs_coords = np.round(polygon * [img_width, img_height]).astype(np.int32)
 
         # else:
         # Convert normalized coordinates to absolute pixel coordinates as a NumPy array
