@@ -3,8 +3,6 @@ from pathlib import Path
 import logging
 import sys
 
-# Import functions from the provided scripts
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_prep')))
 from data_prep.split_data import split_data
 from data_prep.coco2yolo import coco2yolo
 
@@ -27,18 +25,14 @@ def create_ablation_datasets(main_dataset_path, num_chunks, output_folder, test_
     output_folder = Path(output_folder)
     test_dataset_path = Path(test_dataset_path)
 
-    # Ensure output directory exists
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    # Split the main dataset into chunks
     logger.info("Splitting the main dataset into ablation chunks...")
     split_data(
         images_dir=main_dataset_path / "images",
         coco_json_path=main_dataset_path / "annotations" / "coco.json",
         output_dir=output_folder,
         ablation=num_chunks,
-        train_ratio=0.8,  # Not relevant for ablation mode
-        val_ratio=0.1,    # Not relevant for ablation mode
         pose_estimation=False,
         rename_images=True,
         classes=classes,
@@ -50,19 +44,8 @@ def create_ablation_datasets(main_dataset_path, num_chunks, output_folder, test_
             logger.info(f"Converting ablation chunk to YOLO format: {ablation_chunk.name}")
             coco2yolo(
                 dataset_path=str(ablation_chunk),
-                dataset_splits=["train"],  # Ablation datasets typically focus on training
                 mode=mode,
-                ablation=True
             )
-
-    # Optionally, convert the test dataset to YOLO format
-    # if test_dataset_path.exists():
-    #     logger.info("Converting the test dataset to YOLO format...")
-    #     coco2yolo_main(
-    #         dataset_path=str(test_dataset_path),
-    #         dataset_splits=["test"],
-    #         mode=mode
-    #     )
 
     logger.info("Ablation study datasets created successfully!")
 

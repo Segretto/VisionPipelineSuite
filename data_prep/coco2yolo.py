@@ -11,7 +11,7 @@ from joblib import Parallel, delayed
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def coco2yolo(dataset_path, mode, custom_data_path=None):
+def coco2yolo(dataset_path, mode, custom_yaml_data_path=None):
     """Process COCO annotations and generate YOLO or KITTI dataset files.
 
     Args:
@@ -42,7 +42,7 @@ def coco2yolo(dataset_path, mode, custom_data_path=None):
         create_annotation_files(annotations, coco_path.parent)
 
         if split not in ["val", "test"]:
-            create_yaml_file(dataset_root, custom_data_path, data, mode, split)
+            create_yaml_file(dataset_root, custom_yaml_data_path, data, mode, split)
 
 def convert_bounding_boxes(size, box, category_id):
     """Convert COCO bounding box format to YOLO format.
@@ -312,7 +312,7 @@ def create_annotation_files(annotations_by_image, output_dir):
         except IOError as e:
             logger.error(f"Error writing to file {txt_path}: {e}")
 
-def create_yaml_file(dataset_path, custom_data_path, data, mode, split=None):
+def create_yaml_file(dataset_path, custom_yaml_data_path, data, mode, split=None):
     """Generate a YAML configuration file for the dataset.
 
     Args:
@@ -329,8 +329,8 @@ def create_yaml_file(dataset_path, custom_data_path, data, mode, split=None):
     sorted_class_names = sorted(class_names.items())
     class_entries = "\n".join([f"  {id}: {name}" for id, name in sorted_class_names])
 
-    if custom_data_path:
-        dataset_path = Path(custom_data_path)
+    if custom_yaml_data_path:
+        dataset_path = Path(custom_yaml_data_path)
     
     yaml_content = f"""path: {dataset_path.absolute()}  # dataset root dir
 train: {train_path}  # train images (relative to 'path')
@@ -361,7 +361,7 @@ if __name__ == "__main__":
     parser.add_argument("dataset_path", type=str, help="Path to the root directory of the dataset.")
     parser.add_argument("--mode", choices=["detection", "segmentation", "od_kitti", "pose_detection"], default="detection",
                         help="Choose processing mode: 'detection' for bounding boxes, 'segmentation' for segmentation masks, 'pose_detection' for pose estimation.")
-    parser.add_argument("--custom_data_path", type=str, help=" A custom data path string to overwrite the yolo's data yaml file. Useful for running when training on different machines")
+    parser.add_argument("--custom_yaml_data_path", type=str, help=" A custom data path string to overwrite the yolo's data yaml file. Useful for running when training on different machines")
 
     args = parser.parse_args()
 
