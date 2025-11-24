@@ -1,0 +1,2 @@
+[console_scripts]
+vision-prep = vision_suite.cli:main
