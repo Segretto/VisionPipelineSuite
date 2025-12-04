@@ -27,7 +27,6 @@ def run_sam3_inference(
     image_dir: str,
     prompts: List[str],
     output_path: str,
-    checkpoint: str,
     model_type: str = "sam3_h" 
 ) -> None:
     
@@ -37,28 +36,13 @@ def run_sam3_inference(
         print("  pip install -e sam3")
         sys.exit(1)
 
-    print(f"Loading SAM3 model from {checkpoint}...")
+    print(f"Loading SAM3 model ({model_type})...")
     try:
-        # Using API from official README
-        # Assuming build_sam3_image_model accepts checkpoint path. 
-        # If not, it might need to be loaded differently or it loads default.
-        # We will try passing it as an argument.
-        model = build_sam3_image_model(checkpoint=checkpoint, model_type=model_type)
+        # Using API from official README / User provided snippet
+        # The user snippet shows build_sam3_image_model() without arguments.
+        # It likely downloads the model automatically or uses a default path.
+        model = build_sam3_image_model()
         processor = Sam3Processor(model)
-    except TypeError:
-        # Fallback if arguments are different
-        print("⚠️ Warning: build_sam3_image_model signature mismatch. Trying without arguments...")
-        try:
-            model = build_sam3_image_model()
-            # If checkpoint was provided but not used, we might need to load it manually
-            if checkpoint:
-                print(f"Loading checkpoint {checkpoint} manually...")
-                checkpoint_state = torch.load(checkpoint, map_location="cpu")
-                model.load_state_dict(checkpoint_state, strict=False) # strict=False to be safe
-            processor = Sam3Processor(model)
-        except Exception as e:
-             print(f"❌ Failed to load model: {e}")
-             sys.exit(1)
     except Exception as e:
         print(f"❌ Failed to load model: {e}")
         sys.exit(1)
@@ -93,6 +77,10 @@ def run_sam3_inference(
         prompt_to_cat_id[prompt] = cat_id
 
     ann_id = 1
+    
+    # TODO: Implement true batch processing if supported by Sam3Processor.
+    # The current API set_image(image) seems to handle one image at a time.
+    # For now, we iterate.
     
     for img_idx, img_path in enumerate(tqdm(image_paths)):
         image_name = os.path.basename(img_path)
@@ -182,7 +170,7 @@ def main():
     parser.add_argument("--prompts", nargs='+', help="List of text prompts (e.g. 'dog' 'cat').")
     parser.add_argument("--prompts_file", help="Path to a text file containing prompts (one per line).")
     parser.add_argument("--output", required=True, help="Path to save COCO JSON output.")
-    parser.add_argument("--checkpoint", required=True, help="Path to SAM3 model checkpoint.")
+    # parser.add_argument("--checkpoint", required=True, help="Path to SAM3 model checkpoint.") # Removed
     parser.add_argument("--model-type", default="sam3_h", help="Model type (default: sam3_h).")
     
     args = parser.parse_args()
@@ -210,7 +198,7 @@ def main():
         args.images,
         prompts,
         args.output,
-        args.checkpoint,
+        # args.checkpoint,
         args.model_type
     )
 
