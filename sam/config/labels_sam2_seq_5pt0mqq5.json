@@ -1,0 +1,13 @@
+{
+  "next_obj_id": 3,
+  "labels": [
+    {
+      "name": "hammer",
+      "obj_id": 1
+    },
+    {
+      "name": "chair",
+      "obj_id": 2
+    }
+  ]
+}

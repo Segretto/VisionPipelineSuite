@@ -1,0 +1,20 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/sam/samapp.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--images", "${workspaceFolder}/spot_images/frontleft_rgb",
+                "--model-config", "/${workspaceFolder}/sam/models/sam2.1_hiera_l.yaml",
+                "--checkpoint", "${workspaceFolder}/sam/models/sam2.1_hiera_large.pt"
+            ]
+        }
+    ]
+}
