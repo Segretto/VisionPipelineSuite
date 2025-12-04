@@ -102,63 +102,59 @@ def draw_bounding_boxes(img, boxes_to_render, class_map):
     return img
 
 
-def draw_segmentation_masks(img, labels, class_map, gt, alpha=0.6, conf_threshold=0.5):
+def draw_segmentation_masks(img, masks_to_render, class_map):
     """
-    Draw segmentation masks on an image (numpy array BGR).
+    Draw segmentation masks on a PIL Image.
     """
-    img_height, img_width, _ = img.shape
-    overlay = img.copy()
+    img = img.convert("RGBA")
+    overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
 
     try:
         font = ImageFont.truetype("DroidSerif-Regular.ttf", size=26)
-        legend_font = ImageFont.truetype("DroidSerif-Regular.ttf", size=36)
     except IOError:
         font = ImageFont.load_default()
-        legend_font = ImageFont.load_default()
 
-    for label in labels:
-        cls_id = label["class_id"]
-        if cls_id not in class_map:
+    img_width, img_height = img.size
+
+    for mask_info in masks_to_render:
+        polygon = mask_info["polygon"] # Expecting list of (x, y) tuples or list of lists
+        color = mask_info["color"]
+        text = mask_info.get("text")
+        
+        fill_opacity = 0.4
+        alpha = int(255 * fill_opacity)
+        fill_color = color + (alpha,)
+        outline_color = color + (255,)
+
+        # Convert normalized coordinates to absolute if necessary
+        # Assuming input is normalized if max value <= 1.0
+        # But visualize_coco.py was passing normalized.
+        # Let's handle list of lists or flattened list
+        
+        abs_polygon = []
+        if isinstance(polygon[0], (list, tuple)):
+             for pt in polygon:
+                 abs_polygon.append((int(pt[0] * img_width), int(pt[1] * img_height)))
+        else:
+             # Flattened list [x1, y1, x2, y2, ...]
+             for i in range(0, len(polygon), 2):
+                 abs_polygon.append((int(polygon[i] * img_width), int(polygon[i+1] * img_height)))
+
+        if len(abs_polygon) < 2:
             continue
 
-        class_info = class_map[cls_id]
-        color = tuple(class_info["color"])
-        confidence = label["confidence"]
+        draw.polygon(abs_polygon, fill=fill_color, outline=outline_color)
+        
+        if text:
+             # Draw text at centroid or first point
+             text_position = abs_polygon[0]
+             draw.text(text_position, text, font=font, fill=(255, 255, 255, 255))
 
-        if confidence < conf_threshold:
-            continue
-
-        polygon = np.array(label["polygon"], dtype=np.float32)
-        abs_coords = np.round(polygon * [img_width, img_height]).astype(np.int32)
-
-        abs_coords[:, 0] = np.clip(abs_coords[:, 0], 0, img_width - 1)
-        abs_coords[:, 1] = np.clip(abs_coords[:, 1], 0, img_height - 1)
-
-        binary_mask = np.zeros((img_height, img_width), dtype=np.uint8)
-        binary_mask[abs_coords[:, 1], abs_coords[:, 0]] = 1
-        overlay[binary_mask == 1] = color[::-1]
-
-        if not gt:
-            cv2.fillPoly(binary_mask, [abs_coords], 1)
-            contours, _ = cv2.findContours(
-                binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            cv2.fillPoly(overlay, contours, color[::-1])
-
-    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-
-    pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).convert("RGBA")
-    draw = ImageDraw.Draw(pil_img)
-
-    if not gt:
-        draw_confidence_values(
-            draw, class_map, labels, img_width, img_height, font, conf_threshold
-        )
-
-    draw_legend(draw, class_map, legend_font, img_width, img_height)
-
-    img_with_legend = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGR)
-    return img_with_legend
+    # Composite overlay onto the image
+    draw_legend(draw, class_map, font, *img.size)
+    img = Image.alpha_composite(img, overlay)
+    return img
 
 
 def draw_rounded_rectangle(draw, xy, radius=5, fill=None, outline=None, width=1):
