@@ -60,7 +60,7 @@ def main():
     parser_convert = subparsers.add_parser(
         "convert", help="Convert COCO annotations to YOLO/KITTI"
     )
-    parser_convert.add_parser(
+    parser_convert.add_argument(
         "dataset_path", help="Path to the root directory of the dataset"
     )
     parser_convert.add_argument(

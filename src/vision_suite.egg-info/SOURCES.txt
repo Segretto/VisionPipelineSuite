@@ -16,7 +16,10 @@ src/vision_suite/data/processing.py
 src/vision_suite/data/splitting.py
 src/vision_suite/inference/__init__.py
 src/vision_suite/inference/jetson_detector.py
+src/vision_suite/utils/coco.py
+src/vision_suite/utils/video.py
 src/vision_suite/visualization/__init__.py
 src/vision_suite/visualization/drawing.py
 src/vision_suite/visualization/plotting.py
+tests/test_coco_tools_manual.py
 tests/test_imports.py

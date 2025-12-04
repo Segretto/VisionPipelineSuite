@@ -125,7 +125,19 @@ def run_sam3_inference(
                 
                 for mask_idx, mask in enumerate(masks):
                     # Mask is likely boolean or 0/1
+                    # Ensure mask is binary uint8
                     mask_uint8 = (mask > 0).astype(np.uint8)
+                    
+                    # Fix for OpenCV error: Ensure 2D and contiguous
+                    if mask_uint8.ndim > 2:
+                        mask_uint8 = np.squeeze(mask_uint8)
+                    
+                    # If still not 2D (e.g. [1, 1, H, W] -> [H, W]), ensure it is
+                    if mask_uint8.ndim != 2:
+                        # print(f"Warning: Mask shape {mask_uint8.shape} is not 2D. Skipping.")
+                        continue
+                        
+                    mask_uint8 = np.ascontiguousarray(mask_uint8)
                     
                     # Find contours for bbox
                     contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
