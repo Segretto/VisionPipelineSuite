@@ -1,0 +1,30 @@
+I20251204 19:25:03 557361 dinov3 torch_distributed_wrapper.py:255] PyTorch distributed environment: manual job using 127.0.0.1:55557 (rank=0, world size=1)
+W20251204 19:25:03 557361 py.warnings warnings.py:112] /home/segreto/miniconda3/envs/vision/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+
+I20251204 19:25:03 557361 dinov3 config.py:209] git:
+  sha: 54694f7627fd815f62a5dcc82944ffa6153bbb76, status: clean, branch: main
+
+I20251204 19:25:03 557361 dinov3 config.py:213] conda env name: vision
+I20251204 19:25:03 557361 dinov3 config.py:214] conda env path: /home/segreto/miniconda3/envs/vision
+I20251204 19:25:03 557361 dinov3 config.py:215] python path: ['/home/segreto/Repos/VisionPipelineSuite/scripts', '/opt/ros/humble/lib/python3.10/site-packages', '/opt/ros/humble/local/lib/python3.10/dist-packages', '/home/segreto/miniconda3/envs/vision/lib/python312.zip', '/home/segreto/miniconda3/envs/vision/lib/python3.12', '/home/segreto/miniconda3/envs/vision/lib/python3.12/lib-dynload', '/home/segreto/miniconda3/envs/vision/lib/python3.12/site-packages', '/home/segreto/Repos/VisionPipelineSuite/src', '/home/segreto/Repos/VisionPipelineSuite/dinov3', '/tmp/tmp8i88lnuv']
+I20251204 19:25:10 557666 dinov3 torch_distributed_wrapper.py:255] PyTorch distributed environment: manual job using 127.0.0.1:53551 (rank=0, world size=1)
+W20251204 19:25:10 557666 py.warnings warnings.py:112] /home/segreto/miniconda3/envs/vision/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+
+I20251204 19:25:10 557666 dinov3 config.py:209] git:
+  sha: 54694f7627fd815f62a5dcc82944ffa6153bbb76, status: clean, branch: main
+
+I20251204 19:25:10 557666 dinov3 config.py:213] conda env name: vision
+I20251204 19:25:10 557666 dinov3 config.py:214] conda env path: /home/segreto/miniconda3/envs/vision
+I20251204 19:25:10 557666 dinov3 config.py:215] python path: ['/home/segreto/Repos/VisionPipelineSuite/scripts', '/opt/ros/humble/lib/python3.10/site-packages', '/opt/ros/humble/local/lib/python3.10/dist-packages', '/home/segreto/miniconda3/envs/vision/lib/python312.zip', '/home/segreto/miniconda3/envs/vision/lib/python3.12', '/home/segreto/miniconda3/envs/vision/lib/python3.12/lib-dynload', '/home/segreto/miniconda3/envs/vision/lib/python3.12/site-packages', '/home/segreto/Repos/VisionPipelineSuite/src', '/home/segreto/Repos/VisionPipelineSuite/dinov3', '/tmp/tmpcyx23w69']
+I20251204 19:53:28 606746 dinov3 torch_distributed_wrapper.py:255] PyTorch distributed environment: manual job using 127.0.0.1:36709 (rank=0, world size=1)
+W20251204 19:53:28 606746 py.warnings warnings.py:112] /home/segreto/miniconda3/envs/vision/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+
+I20251204 19:53:29 606746 dinov3 config.py:209] git:
+  sha: 54694f7627fd815f62a5dcc82944ffa6153bbb76, status: clean, branch: main
+
+I20251204 19:53:29 606746 dinov3 config.py:213] conda env name: vision
+I20251204 19:53:29 606746 dinov3 config.py:214] conda env path: /home/segreto/miniconda3/envs/vision
+I20251204 19:53:29 606746 dinov3 config.py:215] python path: ['/home/segreto/Repos/VisionPipelineSuite/scripts', '/opt/ros/humble/lib/python3.10/site-packages', '/opt/ros/humble/local/lib/python3.10/dist-packages', '/home/segreto/miniconda3/envs/vision/lib/python312.zip', '/home/segreto/miniconda3/envs/vision/lib/python3.12', '/home/segreto/miniconda3/envs/vision/lib/python3.12/lib-dynload', '/home/segreto/miniconda3/envs/vision/lib/python3.12/site-packages', '/home/segreto/Repos/VisionPipelineSuite/src', '/home/segreto/Repos/VisionPipelineSuite/dinov3', '/tmp/tmpjj5i4nh8']

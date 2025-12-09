@@ -1,0 +1,1 @@
+{"images": [{"id": 100, "file_name": "test_img.jpeg", "height": 100, "width": 100}], "categories": [{"id": 10, "name": "cat"}], "annotations": [{"image_id": 100, "category_id": 10, "bbox": [10, 10, 20, 20], "score": 0.95}, {"image_id": 100, "category_id": 10, "bbox": [10, 10, 20, 20], "score": 0.9}]}

@@ -12,9 +12,16 @@ def draw_bounding_boxes(img, boxes_to_render, class_map):
     draw = ImageDraw.Draw(overlay)
 
     try:
-        font = ImageFont.truetype("DroidSerif-Regular.ttf", size=32)
+        # User requested Bigger and Bold.
+        # Try finding a bold font from system or common paths if possible, 
+        # otherwise just increase size significantly to appear "Bigger" and "Bold-like" (thicker via stroke if needed, but PIL stroke on text is specific)
+        # Using a larger size (e.g. 40, was 32)
+        font = ImageFont.truetype("DroidSerif-Bold.ttf", size=40)
     except IOError:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("DroidSerif-Regular.ttf", size=40)
+        except IOError:
+            font = ImageFont.load_default()
 
     boxes = []
     texts = []
@@ -25,7 +32,7 @@ def draw_bounding_boxes(img, boxes_to_render, class_map):
         color = box_info["color"]
         text = box_info.get("text")
 
-        fill_opacity = 0.161  # ~16.1% opacity
+        fill_opacity = 0.161
         alpha = int(255 * fill_opacity)
         fill_color = color + (alpha,)
         outline_color = color + (255,)
@@ -44,18 +51,23 @@ def draw_bounding_boxes(img, boxes_to_render, class_map):
             text_width = abs(x_right - x_left)
             text_height = abs(y_bottom - y_top)
             bbox_xmid = (x_max - x_min) / 2
+            
+            # Position text on top of the box
             text_position = (
                 x_min + bbox_xmid - text_width // 2,
-                y_min - 2 * text_height,
+                y_min - text_height - 5, # Slight padding
             )
+            # If off screen, put below
             if text_position[1] < 0:
-                text_position = (x_min + bbox_xmid - text_width // 2, y_max)
+                text_position = (x_min + bbox_xmid - text_width // 2, y_max + 5)
+            
             shadow_position = (text_position[0] + 1, text_position[1] + 1)
             texts.append(
                 {
                     "text": text,
                     "position": text_position,
                     "shadow_position": shadow_position,
+                    "color": color # Pass class color for text
                 }
             )
 
@@ -77,23 +89,26 @@ def draw_bounding_boxes(img, boxes_to_render, class_map):
         )
 
     # Draw text
-    colors = [cl["color"][::-1] for cl in class_map.values()]
-    # Fallback if class_map doesn't have enough colors or specific structure
-    # Ideally pass text color explicitly
-
     for text_info in texts:
-        # Simple white text with shadow for now
+        # Shadow for contrast
         draw.text(
             text_info["shadow_position"],
             text_info["text"],
             font=font,
             fill=(0, 0, 0, 128),
         )
+        # Main text in class color (User request: "bold, with the same color as the class")
+        # To emulate bold with PIL if font not bold, we can draw with stroke_width (avail in newer PIL)
+        # or just rely on the larger font size if it's "Bold" font.
+        # Let's assume class color + full alpha
+        text_color = text_info["color"] + (255,)
         draw.text(
             text_info["position"],
             text_info["text"],
             font=font,
-            fill=(255, 255, 255, 255),
+            fill=text_color,
+            stroke_width=1, 
+            stroke_fill=(0,0,0,255) # Add stroke for "Bold" look and contrast if using class color
         )
 
     # Composite overlay onto the image
@@ -111,9 +126,13 @@ def draw_segmentation_masks(img, masks_to_render, class_map):
     draw = ImageDraw.Draw(overlay)
 
     try:
-        font = ImageFont.truetype("DroidSerif-Regular.ttf", size=26)
+        # Consistent larger font
+        font = ImageFont.truetype("DroidSerif-Bold.ttf", size=32) # Increased from 26
     except IOError:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("DroidSerif-Regular.ttf", size=32)
+        except IOError:
+            font = ImageFont.load_default()
 
     img_width, img_height = img.size
 
@@ -127,17 +146,11 @@ def draw_segmentation_masks(img, masks_to_render, class_map):
         fill_color = color + (alpha,)
         outline_color = color + (255,)
 
-        # Convert normalized coordinates to absolute if necessary
-        # Assuming input is normalized if max value <= 1.0
-        # But visualize_coco.py was passing normalized.
-        # Let's handle list of lists or flattened list
-        
         abs_polygon = []
         if isinstance(polygon[0], (list, tuple)):
              for pt in polygon:
                  abs_polygon.append((int(pt[0] * img_width), int(pt[1] * img_height)))
         else:
-             # Flattened list [x1, y1, x2, y2, ...]
              for i in range(0, len(polygon), 2):
                  abs_polygon.append((int(polygon[i] * img_width), int(polygon[i+1] * img_height)))
 
@@ -149,7 +162,8 @@ def draw_segmentation_masks(img, masks_to_render, class_map):
         if text:
              # Draw text at centroid or first point
              text_position = abs_polygon[0]
-             draw.text(text_position, text, font=font, fill=(255, 255, 255, 255))
+             # Text in class color, bold-ish
+             draw.text(text_position, text, font=font, fill=color+(255,), stroke_width=1, stroke_fill=(0,0,0,255))
 
     # Composite overlay onto the image
     draw_legend(draw, class_map, font, *img.size)
@@ -164,8 +178,8 @@ def draw_rounded_rectangle(draw, xy, radius=5, fill=None, outline=None, width=1)
 def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
     legend_x = 10
     legend_y = 10
-    y_text_offset = 5
-    x_text_offset = 5
+    y_text_offset = 6 # Increased padding (was 5)
+    x_text_offset = 6
 
     max_text_width = 0
     total_text_height = 0
@@ -181,7 +195,7 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
         text_height = abs(y_bottom - y_top)
 
         max_text_width = max(max_text_width, text_width)
-        total_text_height += text_height + 5
+        total_text_height += text_height + 10 # Increased spacing (was 5)
 
         entries.append(
             {
@@ -195,9 +209,39 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
     if not entries:
         return
 
-    square_size = int(0.6 * entries[-1]["text_height"])
+    # User requested 15% bigger legend elements
+    # square_size currently derived from text height. 
+    # Since text/font is already bigger (set in caller), this scales naturally?
+    # But let's check square size factor. Was 0.6 * text_height.
+    # User said "Make the legend box and text bigger". Font is bigger now.
+    # Center alignment: "little colored square... aligned... text is aligned misaligned upwards".
+    
+    square_size = int(0.7 * entries[-1]["text_height"]) # Increased factor from 0.6
+    
     legend_width = square_size + max_text_width + 5 * x_text_offset
+    # Increase legend width padding?
+    legend_width = int(legend_width * 1.15)
+    
     legend_height = total_text_height + 3 * y_text_offset
+    legend_height = int(legend_height * 1.15) # Force bigger box
+    
+    # Recalculate background (maybe just padding)
+    # Actually if I scale width/height blindly, content might not fill it properly or be centered.
+    # Better to increase internal paddings.
+    # Let's revert explicit width/height mult and just use generous padding.
+    
+    padding_scale = 1.3 # Increase padding
+    x_text_offset = int(x_text_offset * padding_scale)
+    y_text_offset = int(y_text_offset * padding_scale)
+    
+    # Re-calc based on new offsets
+    total_text_height = 0
+    for entry in entries:
+        total_text_height += entry["text_height"] + y_text_offset # spacing
+
+    legend_width = square_size + max_text_width + 4 * x_text_offset 
+    legend_height = total_text_height + 2 * y_text_offset
+
     legend_background = [
         (legend_x, legend_y),
         (legend_x + legend_width, legend_y + legend_height),
@@ -210,9 +254,16 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
         text_height = entry["text_height"]
         color = entry["color"]
 
-        square_offset = abs(text_height + 2 * y_text_offset - square_size) / 2
-        square_y = current_y + square_offset
-
+        # Alignment logic
+        # We want the square to be vertically centered relative to the text line.
+        # Row height roughly text_height (plus spacing).
+        # Center line of this row is at current_y + text_height/2.
+        
+        row_center_y = current_y + text_height / 2
+        
+        # Square top should be center - size/2
+        square_y = row_center_y - square_size / 2
+        
         square_coords = [
             legend_x + x_text_offset,
             square_y,
@@ -223,7 +274,11 @@ def draw_legend(draw, class_map, font, img_width, img_height, radius=10):
             square_coords, radius=radius * 0.1, fill=color + (255,), outline=None
         )
 
-        text_position = (legend_x + x_text_offset * 3 + square_size, current_y)
+        # Text position: 
+        # Text is drawn from top-left usually? confirm ImageDraw.text behavior.
+        # Default anchor is 'la' (left ascender) or similar.
+        # Ideally we draw text at current_y.
+        text_position = (legend_x + x_text_offset * 2 + square_size, current_y)
         draw.text(text_position, text, fill=(255, 255, 255, 255), font=font)
 
         current_y += text_height + y_text_offset

@@ -10,6 +10,8 @@ src/vision_suite.egg-info/top_level.txt
 src/vision_suite/core/__init__.py
 src/vision_suite/core/utils.py
 src/vision_suite/data/__init__.py
+src/vision_suite/data/coco_dataset.py
+src/vision_suite/data/coco_instance_dataset.py
 src/vision_suite/data/converters.py
 src/vision_suite/data/filtering.py
 src/vision_suite/data/processing.py

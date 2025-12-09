@@ -53,11 +53,34 @@ pip install -e .
 ### Data Preparation
 
 ```bash
-# Convert COCO to YOLO
-python scripts/prepare_data.py convert /path/to/dataset --mode detection
-
 # Split Dataset
 python scripts/prepare_data.py split /path/to/images /path/to/coco.json /path/to/output
+
+# Convert COCO to YOLO
+python scripts/prepare_data.py convert /path/to/dataset --mode detection
+```
+
+### Training (DINOv3)
+
+```bash
+# Train Segmentation (Linear Head)
+python scripts/train_segmentation.py \
+    config=dinov3/dinov3/eval/segmentation/configs/config-ade20k-linear-training.yaml \
+    datasets.root=/path/to/dataset \
+    output_dir=./output_seg
+
+# Train Segmentation (Custom COCO)
+python scripts/train_segmentation.py \
+    config=dinov3/dinov3/eval/segmentation/configs/config-ade20k-linear-training.yaml \
+    datasets.train="CocoSegmentation:split=TRAIN:root=/path/to/imgs:extra=/path/to/coco.json" \
+    datasets.val="CocoSegmentation:split=VAL:root=/path/to/imgs:extra=/path/to/coco.json" \
+    output_dir=./output_seg_coco
+
+# Train Depth Estimation (DPT Head)
+python scripts/train_depth.py \
+    config=dinov3/dinov3/eval/depth/configs/config-nyu.yaml \
+    datasets.root=/path/to/dataset \
+    output_dir=./output_depth
 ```
 
 ### Inference

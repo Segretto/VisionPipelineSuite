@@ -248,5 +248,179 @@ def merge_coco_jsons(json_paths: List[str], output_path: str) -> None:
     with open(output_path, 'w') as f:
         json.dump(final_json, f, indent=2)
     
-    logger.info(f"Merged JSON saved to {output_path}")
     logger.info(f"Stats: {len(merged_images)} images, {len(merged_annotations)} annotations, {len(unified_categories)} categories")
+
+def filter_coco_duplicates(coco_data: Dict[str, Any], iou_threshold: float = 0.95) -> Dict[str, Any]:
+    """
+    Filters duplicate annotations in a COCO dataset based on IoU threshold.
+    If IoU > threshold for two annotations of the same category in the same image,
+    the one with the smaller area is removed.
+
+    Args:
+        coco_data: The COCO dataset dictionary.
+        iou_threshold: IoU threshold for considering two annotations as duplicates.
+
+    Returns:
+        The filtered COCO dataset dictionary.
+    """
+    try:
+        from pycocotools import mask as maskUtils
+    except ImportError:
+        logger.error("pycocotools is required for filtering duplicates.")
+        raise
+
+    images = coco_data.get("images", [])
+    annotations = coco_data.get("annotations", [])
+    categories = coco_data.get("categories", [])
+    
+    # Organize annotations by image_id
+    img_to_anns = {}
+    for ann in annotations:
+        img_id = ann["image_id"]
+        if img_id not in img_to_anns:
+            img_to_anns[img_id] = []
+        img_to_anns[img_id].append(ann)
+    
+    anns_to_remove = set()
+    
+    logger.info(f"Processing {len(img_to_anns)} images for duplicate detection...")
+    
+    for img_id, img_anns in img_to_anns.items():
+        # Group by category
+        cat_to_anns = {}
+        for ann in img_anns:
+            cat_id = ann["category_id"]
+            if cat_id not in cat_to_anns:
+                cat_to_anns[cat_id] = []
+            cat_to_anns[cat_id].append(ann)
+            
+        for cat_id, anns in cat_to_anns.items():
+            if len(anns) < 2:
+                continue
+            
+            # Prepare RLEs or BBoxes for IoU calculation
+            # We prefer mask IoU if segmentation is available
+            
+            # Check if majority have segmentation
+            has_segmentation = any("segmentation" in ann and ann["segmentation"] for ann in anns)
+            
+            iscrowd_list = [ann.get("iscrowd", 0) for ann in anns]
+            
+            if has_segmentation:
+                # Convert to RLEs
+                rles = []
+                for ann in anns:
+                    seg = ann.get("segmentation", [])
+                    if not seg:
+                        # Fallback to bbox if missing segmentation? 
+                        # Or treat as empty mask? 
+                        # Construct from bbox
+                        x, y, w, h = ann["bbox"]
+                        # rle from bbox (not exact but okay if mixed? No, better consistency)
+                        # Actually pycocotools frPyObjects handles both if we format correctly
+                        # But simpler: if no seg, use empty? No, use bbox.
+                        # For consistency let's stick to what availability dictates.
+                        # If mixed, this is tricky. 
+                        # Let's assume consistent format within dataset usually.
+                        # If segmentation is available, use it.
+                        if "segmentation" in ann:
+                            if isinstance(ann["segmentation"], list):
+                                # Polygon
+                                # getting image height/width is needed for frPyObjects
+                                # We need to look up image size.
+                                # This is slow if we do it for every ann.
+                                pass
+                            elif isinstance(ann["segmentation"], dict) and "counts" in ann["segmentation"]:
+                                # RLE
+                                pass
+                        pass
+
+                # Optimized approach:
+                # We need image dims for polygon -> RLE
+                # Find image info
+                img_info = None
+                for img in images:
+                    if img["id"] == img_id:
+                        img_info = img
+                        break
+                if not img_info:
+                    # skip if image info missing
+                    continue
+                
+                h, w = img_info["height"], img_info["width"]
+                
+                encoded_masks = []
+                for ann in anns:
+                    if "segmentation" in ann and ann["segmentation"]:
+                        seg = ann["segmentation"]
+                        if isinstance(seg, list):
+                            # Polygon
+                            rle = maskUtils.frPyObjects(seg, h, w)
+                            rle = maskUtils.merge(rle) # merge parts into one RLE
+                            encoded_masks.append(rle)
+                        elif isinstance(seg, dict) and "counts" in seg:
+                            # RLE (could be uncompressed)
+                            if isinstance(seg["counts"], list):
+                                # Uncompressed RLE -> Convert to compressed (encoded) RLE
+                                encoded = maskUtils.frPyObjects([seg], h, w)[0]
+                                encoded_masks.append(encoded)
+                            else:
+                                # Already compressed (bytes)
+                                encoded_masks.append(seg)
+                        else:
+                            # Empty or invalid
+                            encoded_masks.append(maskUtils.frPyObjects([[0,0,0,0]], h, w)[0]) # dummy
+                    else:
+                        # Fallback to bbox
+                        rect = [ann["bbox"]] # [x,y,w,h]
+                        rle = maskUtils.frPyObjects(rect, h, w)[0]
+                        encoded_masks.append(rle)
+                
+                # Compute IoU matrix
+                ious = maskUtils.iou(encoded_masks, encoded_masks, iscrowd_list)
+                
+            else:
+                # Use BBoxes
+                bboxes = [ann["bbox"] for ann in anns]
+                try:
+                    ious = maskUtils.iou(bboxes, bboxes, iscrowd_list)
+                except Exception as e:
+                    logger.error(f"BBox IoU calculation failed for image {img_id}, category {cat_id}")
+                    logger.error(f"BBoxes type: {type(bboxes)}")
+                    if bboxes:
+                        logger.error(f"First bbox: {bboxes[0]}")
+                    raise e
+            
+            # Find pairs > threshold
+            # ious is N x N matrix
+            # check upper triangle
+            num = len(anns)
+            for i in range(num):
+                if anns[i]["id"] in anns_to_remove:
+                    continue
+                for j in range(i + 1, num):
+                    if anns[j]["id"] in anns_to_remove:
+                        continue
+                    
+                    if ious[i, j] > iou_threshold:
+                        # Check areas
+                        area_i = anns[i].get("area", 0)
+                        area_j = anns[j].get("area", 0)
+                        
+                        # Remove smaller
+                        if area_i < area_j:
+                            anns_to_remove.add(anns[i]["id"])
+                            break # i is removed, stop checking i against others
+                        else:
+                            anns_to_remove.add(anns[j]["id"])
+    
+    if not anns_to_remove:
+        logger.info("No duplicate annotations found.")
+        return coco_data
+        
+    logger.info(f"Removing {len(anns_to_remove)} duplicate annotations.")
+    
+    new_annotations = [ann for ann in annotations if ann["id"] not in anns_to_remove]
+    
+    coco_data["annotations"] = new_annotations
+    return coco_data

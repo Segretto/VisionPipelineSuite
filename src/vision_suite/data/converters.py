@@ -236,9 +236,200 @@ names:
 
         yaml_content += f"\n\n# Keypoints\nkpt_shape: {kpt_shape}"
 
+
     try:
         with open(yaml_path, "w") as file:
             file.write(yaml_content.strip())
         logger.info(f"YAML file created at {yaml_path}")
     except IOError as e:
         logger.error(f"Error writing to file {yaml_path}: {e}")
+
+
+def yolo2coco(
+    images_dir,
+    labels_dir,
+    yaml_path,
+    output_json_path,
+    mode="detection",
+    rle_option=False,
+):
+    """Convert YOLO annotations to COCO JSON format.
+
+    Args:
+        images_dir (str): Path to the directory containing images.
+        labels_dir (str): Path to the directory containing YOLO txt labels.
+        yaml_path (str): Path to the YOLO YAML file defining classes.
+        output_json_path (str): Path to save the generated COCO JSON.
+        mode (str): 'detection' or 'segmentation'.
+        rle_option (bool): If True, convert segmentation polygons to RLE.
+    """
+    import yaml
+    import os
+
+    images_path = Path(images_dir)
+    labels_path = Path(labels_dir)
+    output_path = Path(output_json_path)
+
+    # 1. Load Classes from YAML
+    try:
+        with open(yaml_path, "r") as f:
+            yaml_data = yaml.safe_load(f)
+        names = yaml_data.get("names", {})
+        # Ensure names is a dict id->name. If it's a list, convert it.
+        if isinstance(names, list):
+            categories = [{"id": i, "name": n} for i, n in enumerate(names)]
+        else:
+            categories = [{"id": int(k), "name": v} for k, v in names.items()]
+    except Exception as e:
+        logger.error(f"Error loading YAML file: {e}")
+        return
+
+    # 2. Initialize COCO JSON structure
+    coco_data = {
+        "images": [],
+        "annotations": [],
+        "categories": categories,
+    }
+
+    # 3. Iterate over images
+    annotation_id = 1
+    image_id = 1
+
+    # Supported image extensions
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+    image_files = [
+        f for f in images_path.iterdir() if f.suffix.lower() in valid_extensions
+    ]
+    image_files.sort()
+
+    for img_file in image_files:
+        # Image info
+        try:
+            img = cv2.imread(str(img_file))
+            if img is None:
+                logger.warning(f"Could not read image: {img_file}")
+                continue
+            height, width = img.shape[:2]
+        except Exception as e:
+            logger.error(f"Error reading image {img_file}: {e}")
+            continue
+
+        # Relative path for portability
+        # We want the path relative to the JSON file's directory
+        try:
+            file_name = os.path.relpath(str(img_file), str(output_path.parent))
+        except ValueError:
+            # Fallback if paths are on different drives or something weird
+            file_name = img_file.name
+
+        image_info = {
+            "id": image_id,
+            "file_name": file_name,
+            "height": height,
+            "width": width,
+        }
+        coco_data["images"].append(image_info)
+
+        # Corresponding Label File
+        label_file = labels_path / (img_file.stem + ".txt")
+        if label_file.exists():
+            with open(label_file, "r") as f:
+                lines = f.readlines()
+
+            for line in lines:
+                parts = line.strip().split()
+                if not parts:
+                    continue
+
+                class_id = int(parts[0])
+                # Check for Confidence
+                # Detection: class x y w h [conf] -> 5 or 6 items
+                # Segmentation: class x1 y1 ... [conf] -> odd number if conf exists (2N + 1 + 1 = even) vs (2N + 1 = odd)?
+                # Actually:
+                # Detection: 5 args (class, x, y, w, h) -> if 6, last is conf
+                # Segmentation: 2N args (coords) + 1 (class). Total 2N+1. If 2N+2, last is conf.
+                
+                confidence = None
+                coords = [float(x) for x in parts[1:]]
+
+                if mode == "detection":
+                    if len(coords) == 5:
+                        confidence = coords[-1]
+                        coords = coords[:-1]
+                    
+                    x_c, y_c, w_n, h_n = coords
+                    # Convert to Top-Left x, y, w, h (absolute)
+                    w = w_n * width
+                    h = h_n * height
+                    x = (x_c * width) - (w / 2)
+                    y = (y_c * height) - (h / 2)
+                    bbox = [x, y, w, h]
+                    segmentation = []
+                    area = w * h
+
+                elif mode == "segmentation":
+                    # Check if last element is confidence
+                    # Standard segmentation line: class x1 y1 x2 y2 ...
+                    # Number of coords should be even (x, y pairs).
+                    if len(coords) % 2 != 0:
+                        # Odd number of coords means we have an extra value, likely confidence
+                         confidence = coords[-1]
+                         coords = coords[:-1]
+
+                    # Denormalize
+                    poly_coords = []
+                    for i in range(0, len(coords), 2):
+                        px = coords[i] * width
+                        py = coords[i+1] * height
+                        poly_coords.extend([px, py])
+
+                    # Create BBox from Polygon
+                    x_coords = poly_coords[0::2]
+                    y_coords = poly_coords[1::2]
+                    x_min = min(x_coords)
+                    y_min = min(y_coords)
+                    bound_w = max(x_coords) - x_min
+                    bound_h = max(y_coords) - y_min
+                    bbox = [x_min, y_min, bound_w, bound_h]
+
+                    if rle_option:
+                         rles = maskUtils.frPyObjects([poly_coords], height, width)
+                         rle = maskUtils.merge(rles)
+                         rle["counts"] = rle["counts"].decode("utf-8")
+                         segmentation = rle
+                         area = float(maskUtils.area(rle))
+                    else:
+                        segmentation = [poly_coords]
+                         # Calculate Polygon Area (Shoelace formula approx or similar, but simplified here)
+                         # Use pycocotools for accurate area
+                        rles = maskUtils.frPyObjects([poly_coords], height, width)
+                        area = float(maskUtils.area(rles))
+
+                annotation = {
+                    "id": annotation_id,
+                    "image_id": image_id,
+                    "category_id": class_id, # YOLO 0-indexed matches or mapped via YAML? YAML is source of truth.
+                    # Usually COCO uses 1-based but if we define categories from 0 in YAML, we keep it consistent.
+                    # Standard COCO often starts at 1, but we'll stick to what the YAML says.
+                    "bbox": bbox,
+                    "area": area,
+                    "segmentation": segmentation,
+                    "iscrowd": 0,
+                }
+                if confidence is not None:
+                    annotation["score"] = confidence
+
+                coco_data["annotations"].append(annotation)
+                annotation_id += 1
+
+        image_id += 1
+
+    # 4. Save JSON
+    try:
+        # Create output directory if it doesn't exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(coco_data, f, indent=4)
+        logger.info(f"COCO JSON converted to: {output_path}")
+    except IOError as e:
+        logger.error(f"Error writing to file {output_path}: {e}")
