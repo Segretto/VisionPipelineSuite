@@ -1,7 +1,0 @@
-monitor
-person
-keyboard
-mouse
-cellphone
-laptop
-bottle

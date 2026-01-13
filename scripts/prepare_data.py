@@ -2,7 +2,7 @@
 import argparse
 import logging
 from pathlib import Path
-from vision_suite.data import converters, splitting, processing, filtering
+# from vision_suite.data import converters, splitting, processing, filtering
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -11,10 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 def convert_command(args):
+    from vision_suite.data import converters
     converters.coco2yolo(args.dataset_path, args.mode, args.custom_yaml_data_path)
 
 
 def split_command(args):
+    from vision_suite.data import splitting
     splitting.split_data(
         images_dir=args.images_dir,
         coco_json_path=args.coco_json_path,
@@ -25,14 +27,18 @@ def split_command(args):
         k=args.k,
         rename_images=args.rename_images,
         classes=args.classes,
+        split_mode=args.split_mode,
+        absolute_paths=args.absolute_paths,
     )
 
 
 def resize_command(args):
+    from vision_suite.data import processing
     processing.process_images_and_annotations(args.image_folder, args.annotation_path)
 
 
 def filter_command(args):
+    from vision_suite.data import filtering
     filtering.filter_coco_annotations(
         input_json_path=Path(args.input_json),
         output_json_path=Path(args.output_json),
@@ -41,6 +47,7 @@ def filter_command(args):
 
 
 def deduplicate_command(args):
+    from vision_suite.data import filtering
     duplicates = filtering.scan_for_duplicates(args.folder_path)
     if duplicates:
         logger.info(f"Found {len(duplicates)} sets of duplicates. Processing...")
@@ -94,6 +101,12 @@ def main():
     )
     parser_split.add_argument(
         "--classes", nargs="+", default=[], help="Filter by classes"
+    )
+    parser_split.add_argument(
+        "--split-mode", choices=["yolo", "coco"], default="yolo", help="Split mode structure"
+    )
+    parser_split.add_argument(
+        "--absolute-paths", action="store_true", help="Use absolute paths in JSON"
     )
     parser_split.set_defaults(func=split_command)
 

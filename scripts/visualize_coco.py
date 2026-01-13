@@ -12,11 +12,9 @@ import pycocotools.mask as mask_utils
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from vision_suite.visualization.drawing import draw_bounding_boxes, draw_segmentation_masks
+from vision_suite.utils.coco import load_coco, match_annotations
 
-def load_coco(json_path):
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-    return data
+
 
 def get_class_map(coco_data):
     class_map = {}
@@ -35,119 +33,7 @@ def get_class_map(coco_data):
         }
     return class_map
 
-def compute_iou_boxes(box1, box2):
-    """
-    Compute IoU between two bounding boxes [x, y, w, h].
-    """
-    x1, y1, w1, h1 = box1
-    x2, y2, w2, h2 = box2
-    
-    xi1 = max(x1, x2)
-    yi1 = max(y1, y2)
-    xi2 = min(x1 + w1, x2 + w2)
-    yi2 = min(y1 + h1, y2 + h2)
-    
-    inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
-    
-    box1_area = w1 * h1
-    box2_area = w2 * h2
-    union_area = box1_area + box2_area - inter_area
-    
-    if union_area == 0:
-        return 0
-    return inter_area / union_area
 
-from collections import defaultdict
-
-def compute_iou(rle1, rle2):
-    """
-    Compute IoU between two RLE masks.
-    """
-    return mask_utils.iou([rle1], [rle2], [0])[0][0]
-
-def compute_iop_boxes(pred_box, gt_box):
-    """
-    Compute Intersection over Prediction Area.
-    pred_box: [x, y, w, h]
-    gt_box: [x, y, w, h]
-    """
-    x1, y1, w1, h1 = pred_box
-    x2, y2, w2, h2 = gt_box
-    
-    xi1 = max(x1, x2)
-    yi1 = max(y1, y2)
-    xi2 = min(x1 + w1, x2 + w2)
-    yi2 = min(y1 + h1, y2 + h2)
-    
-    inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
-    pred_area = w1 * h1
-    
-    if pred_area == 0: return 0
-    return inter_area / pred_area
-
-def match_annotations(gt_anns, pred_anns, pred_id_to_gt_id=None, iou_threshold=0.5, use_segmentation=False, match_n=1):
-    """
-    Match ground truth and predicted annotations.
-    match_n: Number of times a GT can be matched (default 1).
-    """
-    tp_preds = []
-    fp_preds = []
-    
-    matched_gt_counts = defaultdict(int)
-    
-    pred_anns_sorted = sorted(pred_anns, key=lambda x: x.get("score", 0), reverse=True)
-    
-    for pred in pred_anns_sorted:
-        best_metric = 0 # Can be IoU or IoP
-        best_gt_idx = -1
-        match_type = "none"
-        
-        pred_cat = pred["category_id"]
-        if pred_id_to_gt_id:
-            gt_cat_target = pred_id_to_gt_id.get(pred_cat)
-        else:
-            gt_cat_target = pred_cat
-            
-        for i, gt in enumerate(gt_anns):
-            # Check if this GT has been matched 'n' times already
-            if matched_gt_counts[gt["id"]] >= match_n:
-                continue
-            if gt["category_id"] != gt_cat_target:
-                continue
-                
-            # Default IoU check
-            iou = 0
-            if "bbox" in pred and "bbox" in gt:
-                iou = compute_iou_boxes(pred["bbox"], gt["bbox"])
-            
-            # IoP Check (Intersection over Prediction)
-            iop = 0
-            if "bbox" in pred and "bbox" in gt:
-                iop = compute_iop_boxes(pred["bbox"], gt["bbox"])
-            
-            # Priority: High IoU > High IoP?
-            if iou >= iou_threshold:
-                if iou > best_metric: # Track best IoU
-                    best_metric = iou
-                    best_gt_idx = i
-                    match_type = "iou"
-            elif iop >= 0.9:
-                 if match_type != "iou":
-                    if iop > best_metric:
-                        best_metric = iop
-                        best_gt_idx = i
-                        match_type = "iop"
-        
-        if best_gt_idx != -1:
-            tp_preds.append((pred, gt_anns[best_gt_idx]))
-            matched_gt_counts[gt_anns[best_gt_idx]["id"]] += 1
-        else:
-            fp_preds.append(pred)
-            
-    # False Negatives are those that were NEVER matched (count == 0)
-    # Even if n=5, if it was matched 1 time, it is found.
-    fn_gts = [gt for gt in gt_anns if matched_gt_counts[gt["id"]] == 0]
-    return tp_preds, fp_preds, fn_gts
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize COCO annotations.")

@@ -3,8 +3,238 @@ import os
 from typing import List, Dict, Any, Set, Tuple
 import logging
 
+import logging
+import numpy as np
+from collections import defaultdict
+import pycocotools.mask as mask_utils
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def load_coco(json_path: str) -> Dict[str, Any]:
+    """
+    Load a COCO JSON file.
+    """
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+    return data
+
+def compute_iou_boxes(box1, box2):
+    """
+    Compute IoU between two bounding boxes [x, y, w, h].
+    """
+    x1, y1, w1, h1 = box1
+    x2, y2, w2, h2 = box2
+    
+    xi1 = max(x1, x2)
+    yi1 = max(y1, y2)
+    xi2 = min(x1 + w1, x2 + w2)
+    yi2 = min(y1 + h1, y2 + h2)
+    
+    inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    
+    box1_area = w1 * h1
+    box2_area = w2 * h2
+    union_area = box1_area + box2_area - inter_area
+    
+    if union_area == 0:
+        return 0
+    return inter_area / union_area
+
+def compute_iop_boxes(pred_box, gt_box):
+    """
+    Compute Intersection over Prediction Area.
+    pred_box: [x, y, w, h]
+    gt_box: [x, y, w, h]
+    """
+    x1, y1, w1, h1 = pred_box
+    x2, y2, w2, h2 = gt_box
+    
+    xi1 = max(x1, x2)
+    yi1 = max(y1, y2)
+    xi2 = min(x1 + w1, x2 + w2)
+    yi2 = min(y1 + h1, y2 + h2)
+    
+    inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    pred_area = w1 * h1
+    
+    if pred_area == 0: return 0
+    return inter_area / pred_area
+
+def ann_to_rle(ann, h, w):
+    """
+    Convert annotation (Target or Pred) to RLE.
+    Handles Polygon, RLE (dict), and RLE (bytes).
+    """
+    seg = ann.get("segmentation")
+    if not seg:
+        # Fallback to bbox if available, else empty
+        if "bbox" in ann:
+            return mask_utils.frPyObjects([ann["bbox"]], h, w)[0]
+        return mask_utils.frPyObjects([[0,0,0,0]], h, w)[0]
+
+    if isinstance(seg, list):
+        # Polygon - list of lists
+        # Filter empty polys
+        valid_polys = [p for p in seg if len(p) >= 6]
+        if not valid_polys:
+             return mask_utils.frPyObjects([[0,0,0,0]], h, w)[0]
+        rles = mask_utils.frPyObjects(valid_polys, h, w)
+        return mask_utils.merge(rles)
+    elif isinstance(seg, dict) and "counts" in seg:
+        # RLE
+        if isinstance(seg["counts"], list):
+            # Uncompressed RLE
+            return mask_utils.frPyObjects([seg], h, w)[0]
+        else:
+            # Compressed RLE
+            return seg
+    return mask_utils.frPyObjects([[0,0,0,0]], h, w)[0]
+
+def compute_iou_masks(ann1, ann2, h, w, iscrowd=0):
+    rle1 = ann_to_rle(ann1, h, w)
+    rle2 = ann_to_rle(ann2, h, w)
+    
+    # iou returns M x N array, we have 1 vs 1
+    # iscrowd list for ground truth (ann2 usually)
+    # mask_utils.iou takes list of RLEs
+    
+    # Note: mask_utils.iou expects iscrowd as list of 0/1 for dt (detection) or gt (ground truth)?
+    # Documentation: iou(dt, gt, iscrowd)
+    # dt: list of RLEs
+    # gt: list of RLEs
+    # iscrowd: list of 0/1 (length of gt)
+    
+    val = mask_utils.iou([rle1], [rle2], [iscrowd])
+    return val[0][0]
+
+def match_annotations(gt_anns, pred_anns, pred_id_to_gt_id=None, iou_threshold=0.5, use_segmentation=False, match_n=1, img_height=None, img_width=None):
+    """
+    Match ground truth and predicted annotations.
+    match_n: Number of times a GT can be matched (default 1).
+    """
+    tp_preds = []
+    fp_preds = []
+    
+    matched_gt_counts = defaultdict(int)
+    
+    pred_anns_sorted = sorted(pred_anns, key=lambda x: x.get("score", 0), reverse=True)
+    
+    for pred in pred_anns_sorted:
+        best_metric = 0 # Can be IoU or IoP
+        best_gt_idx = -1
+        match_type = "none"
+        
+        pred_cat = pred["category_id"]
+        if pred_id_to_gt_id:
+            gt_cat_target = pred_id_to_gt_id.get(pred_cat)
+        else:
+            gt_cat_target = pred_cat
+            
+        for i, gt in enumerate(gt_anns):
+            # Check if this GT has been matched 'n' times already
+            if matched_gt_counts[gt["id"]] >= match_n:
+                continue
+            if gt["category_id"] != gt_cat_target:
+                continue
+                
+            # Default IoU check
+            iou = 0
+            
+            if use_segmentation and img_height and img_width:
+                 try:
+                     iou = compute_iou_masks(pred, gt, img_height, img_width, gt.get("iscrowd", 0))
+                     # logger.info(f"Computed Mask IoU: {iou}") 
+                 except Exception as e:
+                     logger.warning(f"Mask IoU failed: {e}. Falling back to Box.")
+                     if "bbox" in pred and "bbox" in gt:
+                         iou = compute_iou_boxes(pred["bbox"], gt["bbox"])
+            else:
+                if use_segmentation:
+                    logger.warning(f"Segmentation requested but missing img dims: h={img_height}, w={img_width}")
+                
+                # Box IoU
+                if "bbox" in pred and "bbox" in gt:
+                    iou = compute_iou_boxes(pred["bbox"], gt["bbox"])
+            
+            # IoP Check (Intersection over Prediction) - ONLY FOR BOX currently
+            iop = 0
+            if not use_segmentation and "bbox" in pred and "bbox" in gt:
+                iop = compute_iop_boxes(pred["bbox"], gt["bbox"])
+            
+            # Priority: High IoU > High IoP?
+            if iou >= iou_threshold:
+                if iou > best_metric: # Track best IoU
+                    best_metric = iou
+                    best_gt_idx = i
+                    match_type = "iou"
+            elif iop >= 0.9:
+                 if match_type != "iou":
+                    if iop > best_metric:
+                        best_metric = iop
+                        best_gt_idx = i
+                        match_type = "iop"
+        
+        if best_gt_idx != -1:
+            tp_preds.append((pred, gt_anns[best_gt_idx]))
+            matched_gt_counts[gt_anns[best_gt_idx]["id"]] += 1
+        else:
+            fp_preds.append(pred)
+            
+    # False Negatives are those that were NEVER matched (count == 0)
+    fn_gts = [gt for gt in gt_anns if matched_gt_counts[gt["id"]] == 0]
+    return tp_preds, fp_preds, fn_gts
+
+def calculate_confusion_matrix(tp_preds, fp_preds, fn_gts, categories):
+    """
+    Calculate the confusion matrix.
+    Rows: Ground Truth
+    Columns: Predictions
+    
+    Returns:
+       matrix: sklearn-style confusion matrix (or dict representation)
+       labels: list of class names corresponding to indices
+    """
+    # Categories include "Background" typically for FP/FN?
+    # Or we can just do Class vs Class.
+    # TP: GT Class X matched with Pred Class X (or mapped)
+    # FP: Pred Class X unmatched (GT Background)
+    # FN: GT Class X unmatched (Pred Background)
+    # Misclassification: GT Class X matched with Pred Class Y? match_annotations enforces category match currently if we strictly filter.
+    # But `match_annotations` strictly filters by category: `if gt["category_id"] != gt_cat_target: continue`.
+    # So we don't handle cross-class confusion in that function. 
+    # That function assumes we only match same-class.
+    # So "Confusion Matrix" here is diagonal + FP col + FN row.
+    
+    # Let's organize by class ID
+    cat_id_to_name = {c["id"]: c["name"] for c in categories}
+    sorted_cat_ids = sorted(cat_id_to_name.keys())
+    
+    stats = {}
+    for cid in sorted_cat_ids:
+        cname = cat_id_to_name[cid]
+        stats[cname] = {"TP": 0, "FP": 0, "FN": 0}
+        
+    for pred, gt in tp_preds:
+        # Assuming pred category maps to gt category correctly
+        cid = gt["category_id"]
+        if cid in cat_id_to_name:
+            stats[cat_id_to_name[cid]]["TP"] += 1
+            
+    for pred in fp_preds:
+        cid = pred["category_id"]
+        # If we have a map, we might need to map it back? 
+        # But usually we report in terms of GT classes or Pred classes?
+        # Usually Precision/Recall is per class.
+        if cid in cat_id_to_name:
+             stats[cat_id_to_name[cid]]["FP"] += 1
+        
+    for gt in fn_gts:
+        cid = gt["category_id"]
+        if cid in cat_id_to_name:
+            stats[cat_id_to_name[cid]]["FN"] += 1
+            
+    return stats
 
 def validate_coco_json(json_path: str) -> Dict[str, Any]:
     """

@@ -20,9 +20,15 @@ def split_data(
     pose_estimation=False,
     rename_images=False,
     classes=[],
+    split_mode="yolo",
+    absolute_paths=False,
 ):
     """
     Splits a COCO dataset into training, validation, and testing sets or creates k-fold splits.
+    
+    Args:
+        split_mode (str): 'yolo' or 'coco'. Defines the output directory structure.
+        absolute_paths (bool): If True, uses absolute paths in the output JSON.
     """
     logger.info("Loading COCO annotations...")
     with open(coco_json_path, "r") as f:
@@ -51,10 +57,11 @@ def split_data(
             annotations,
             categories,
             images_dir,
-            output_dir,
             k,
             rename_images,
             pose_estimation,
+            split_mode,
+            absolute_paths,
         )
     elif ablation > 0:
         splits = generate_splits(images, train_ratio, val_ratio, ablation)
@@ -66,6 +73,8 @@ def split_data(
             output_dir,
             rename_images,
             pose_estimation,
+            split_mode,
+            absolute_paths,
         )
     else:
         splits = generate_splits(images, train_ratio, val_ratio, ablation=0)
@@ -77,6 +86,8 @@ def split_data(
             output_dir,
             rename_images,
             pose_estimation,
+            split_mode,
+            absolute_paths,
         )
 
 
@@ -89,6 +100,8 @@ def create_kfold_splits_with_dataframe(
     k,
     rename_images,
     pose_estimation,
+    split_mode="yolo",
+    absolute_paths=False,
 ):
     """
     Create k-fold splits for the dataset using a pandas DataFrame of class counts per image.
@@ -139,22 +152,44 @@ def create_kfold_splits_with_dataframe(
         val_annotations = filter_annotations(val_images, annotations, pose_estimation)
 
         # Prepare directories
-        train_images_path = output_dir / fold_name / "images" / "train"
-        train_labels_path = output_dir / fold_name / "labels" / "train"
-        val_images_path = output_dir / fold_name / "images" / "val"
-        val_labels_path = output_dir / fold_name / "labels" / "val"
+        # Prepare directories based on split_mode
+        if split_mode == "coco":
+             # COCO: fold/train, fold/val, fold/annotations/instances_train.json
+             train_images_path = output_dir / fold_name / "train"
+             val_images_path = output_dir / fold_name / "val"
+             train_labels_path = output_dir / fold_name / "annotations"
+             val_labels_path = train_labels_path # Same dir for annotations usually in COCO structure? 
+             # Actually, simpler to keep separate if fold based, but let's stick to standard COCO within the fold folder.
+             # annotations dir needs to exist.
+             
+             train_json_name = "instances_train.json"
+             val_json_name = "instances_val.json"
+             
+        else:
+            # YOLO: fold/images/train, fold/labels/train/coco.json
+            train_images_path = output_dir / fold_name / "images" / "train"
+            train_labels_path = output_dir / fold_name / "labels" / "train"
+            val_images_path = output_dir / fold_name / "images" / "val"
+            val_labels_path = output_dir / fold_name / "labels" / "val"
+            
+            train_json_name = "coco.json"
+            val_json_name = "coco.json"
 
         train_images_path.mkdir(parents=True, exist_ok=True)
-        train_labels_path.mkdir(parents=True, exist_ok=True)
+        if split_mode == "yolo":
+            train_labels_path.mkdir(parents=True, exist_ok=True)
+            val_labels_path.mkdir(parents=True, exist_ok=True)
+        elif split_mode == "coco":
+            train_labels_path.mkdir(parents=True, exist_ok=True)
+            
         val_images_path.mkdir(parents=True, exist_ok=True)
-        val_labels_path.mkdir(parents=True, exist_ok=True)
 
         # Copy images and create subsets
         train_updated_images = copy_images(
-            train_images, images_dir, train_images_path, rename_images
+            train_images, images_dir, train_images_path, rename_images, absolute_paths=absolute_paths
         )
         val_updated_images = copy_images(
-            val_images, images_dir, val_images_path, rename_images
+            val_images, images_dir, val_images_path, rename_images, absolute_paths=absolute_paths
         )
 
         train_coco = create_coco_subset(
@@ -163,9 +198,9 @@ def create_kfold_splits_with_dataframe(
         val_coco = create_coco_subset(val_updated_images, val_annotations, categories)
 
         # Save JSON files
-        with open(train_labels_path / "coco.json", "w") as f:
+        with open(train_labels_path / train_json_name, "w") as f:
             json.dump(train_coco, f, indent=4)
-        with open(val_labels_path / "coco.json", "w") as f:
+        with open(val_labels_path / val_json_name, "w") as f:
             json.dump(val_coco, f, indent=4)
 
         logger.info(f"{fold_name} split completed.")
@@ -179,21 +214,32 @@ def process_splits(
     output_dir,
     rename_images,
     pose_estimation,
+    split_mode="yolo",
+    absolute_paths=False,
 ):
     """
     Process and save splits for training, validation, and testing.
     """
     for split_name, images_set in splits.items():
         try:
-            # Create directories
-            images_output_path = output_dir / "images" / split_name
-            labels_output_path = output_dir / "labels" / split_name
+            # Create directories based on split_mode
+            if split_mode == "coco":
+                # Output: output_dir/{split}, output_dir/annotations/instances_{split}.json
+                images_output_path = output_dir / split_name
+                labels_output_path = output_dir / "annotations"
+                json_name = f"instances_{split_name}.json"
+            else:
+                # Output: output_dir/images/{split}, output_dir/labels/{split}/coco.json
+                images_output_path = output_dir / "images" / split_name
+                labels_output_path = output_dir / "labels" / split_name
+                json_name = "coco.json"
+            
             images_output_path.mkdir(parents=True, exist_ok=True)
             labels_output_path.mkdir(parents=True, exist_ok=True)
 
             # Copy images and create COCO subset
             updated_images = copy_images(
-                images_set, images_dir, images_output_path, rename_images
+                images_set, images_dir, images_output_path, rename_images, absolute_paths=absolute_paths
             )
             filtered_annotations = filter_annotations(
                 updated_images, annotations, pose_estimation
@@ -203,7 +249,7 @@ def process_splits(
             )
 
             # Save COCO JSON
-            with open(labels_output_path / "coco.json", "w") as file:
+            with open(labels_output_path / json_name, "w") as file:
                 json.dump(coco_subset, file, indent=4)
 
             # Save metadata
@@ -246,7 +292,7 @@ def generate_splits(images, train_ratio, val_ratio, ablation):
     return splits
 
 
-def copy_images(images, src_dir, dest_dir, rename_images, name_padding=5):
+def copy_images(images, src_dir, dest_dir, rename_images, name_padding=5, absolute_paths=False):
     """
     Copy selected images to a specified directory, and optionally rename them with new numerical IDs.
     Update the images' filenames in the dataset metadata if renamed.
@@ -272,21 +318,28 @@ def copy_images(images, src_dir, dest_dir, rename_images, name_padding=5):
 
                 # Update the image metadata to reflect the new filename
                 updated_image = image.copy()
-                updated_image["file_name"] = new_file_name
+                if absolute_paths:
+                    updated_image["file_name"] = str((Path(dest_dir) / new_file_name).resolve())
+                else:
+                    updated_image["file_name"] = new_file_name
                 updated_images.append(updated_image)
 
             else:
-                updated_images = images
+                updated_image = image.copy()
+                if absolute_paths:
+                    updated_image["file_name"] = str((Path(dest_dir) / image["file_name"]).resolve())
+                updated_images.append(updated_image)
 
             src_path = Path(src_dir) / image["file_name"]
-            dest_path = Path(dest_dir) / new_file_name
+            dest_path = Path(dest_dir) / new_file_name if rename_images else Path(dest_dir) / image["file_name"]
+            
             shutil.copy(src_path, dest_path)
             logger.debug(f"Successfully copied {src_path} to {dest_path}")
 
         except Exception as e:
-            logger.error(f"Failed to copy {src_path} to {dest_path}: {e}")
+            logger.error(f"Failed to copy image {image}: {e}")
 
-    return updated_images
+    return updated_images if (rename_images or absolute_paths) else images
 
 
 def filter_annotations(images_set, annotations, pose_estimation):
